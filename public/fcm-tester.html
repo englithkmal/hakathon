@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Waffer · FCM Token Tester</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, "Segoe UI", "Cairo", "Tajawal", sans-serif;
+      background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+      color: #e2e8f0;
+      min-height: 100vh;
+      margin: 0;
+      padding: 24px;
+      line-height: 1.6;
+    }
+    .container { max-width: 760px; margin: 0 auto; }
+    h1 { color: #38bdf8; margin-bottom: 8px; font-size: 28px; }
+    .subtitle { color: #94a3b8; margin-bottom: 32px; font-size: 14px; }
+    .card {
+      background: #0b1220;
+      border: 1px solid #1e293b;
+      border-radius: 16px;
+      padding: 24px;
+      margin-bottom: 20px;
+    }
+    .card h2 { color: #f8fafc; margin-top: 0; font-size: 18px; }
+    .step {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .step-num {
+      background: #38bdf8;
+      color: #0f172a;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+      flex-shrink: 0;
+    }
+    label { display: block; margin-bottom: 8px; color: #cbd5e1; font-size: 14px; }
+    input, textarea {
+      width: 100%;
+      padding: 12px;
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      color: #f1f5f9;
+      font-family: "Courier New", monospace;
+      font-size: 13px;
+      direction: ltr;
+      text-align: left;
+    }
+    textarea { min-height: 120px; resize: vertical; }
+    button {
+      background: #38bdf8;
+      color: #0f172a;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 8px;
+      font-weight: bold;
+      cursor: pointer;
+      font-size: 14px;
+      margin-top: 12px;
+      transition: all 0.2s;
+    }
+    button:hover { background: #0ea5e9; transform: translateY(-1px); }
+    button:disabled { background: #475569; cursor: not-allowed; transform: none; }
+    button.secondary { background: #334155; color: #f1f5f9; }
+    button.secondary:hover { background: #475569; }
+    .token-box {
+      background: #064e3b;
+      border: 1px solid #10b981;
+      padding: 16px;
+      border-radius: 8px;
+      word-break: break-all;
+      font-family: "Courier New", monospace;
+      font-size: 12px;
+      direction: ltr;
+      text-align: left;
+      max-height: 150px;
+      overflow-y: auto;
+      margin-top: 8px;
+    }
+    .status {
+      padding: 12px;
+      border-radius: 8px;
+      margin-top: 12px;
+      font-size: 14px;
+    }
+    .status.info { background: #1e3a8a; color: #bfdbfe; }
+    .status.error { background: #7f1d1d; color: #fecaca; }
+    .status.success { background: #064e3b; color: #a7f3d0; }
+    code {
+      background: #1e293b;
+      padding: 2px 6px;
+      border-radius: 4px;
+      direction: ltr;
+      display: inline-block;
+    }
+    .hint { color: #94a3b8; font-size: 13px; margin-top: 6px; }
+    a { color: #38bdf8; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🔔 Waffer · FCM Token Tester</h1>
+    <p class="subtitle">احصل على FCM token من متصفحك لاستخدامه في Postman وتجربة OTP عبر الإشعارات</p>
+
+    <!-- STEP 1: Firebase Config -->
+    <div class="card">
+      <div class="step">
+        <div class="step-num">1</div>
+        <h2 style="margin: 0;">إعدادات Firebase Web</h2>
+      </div>
+      <p class="hint">
+        احصل عليها من
+        <a href="https://console.firebase.google.com/project/molly-9a63d/settings/general" target="_blank">Firebase Console → Project settings → Your apps → Web app</a>
+        — إذا لم يكن لديك Web App، أضف واحدة (الأيقونة <code>&lt;/&gt;</code>).
+      </p>
+      <label>Firebase Web Config (JSON)</label>
+      <textarea id="config" placeholder='{
+  "apiKey": "AIza...",
+  "authDomain": "molly-9a63d.firebaseapp.com",
+  "projectId": "molly-9a63d",
+  "storageBucket": "molly-9a63d.firebasestorage.app",
+  "messagingSenderId": "123456789",
+  "appId": "1:123:web:abc"
+}'></textarea>
+
+      <label style="margin-top: 16px;">VAPID Key (Web Push Certificates)</label>
+      <input id="vapid" placeholder="AdrTqXGspj-bkIBmTIR2PsA..." />
+      <p class="hint">
+        من
+        <a href="https://console.firebase.google.com/project/molly-9a63d/settings/cloudmessaging" target="_blank">Cloud Messaging → Web configuration → Web Push certificates</a>
+      </p>
+
+      <button id="saveConfig">حفظ الإعدادات</button>
+    </div>
+
+    <!-- STEP 2: Get Token -->
+    <div class="card">
+      <div class="step">
+        <div class="step-num">2</div>
+        <h2 style="margin: 0;">الحصول على FCM Token</h2>
+      </div>
+      <p class="hint">المتصفح سيطلب الإذن للإشعارات. اقبل ثم سيظهر الـ token.</p>
+      <button id="getToken" disabled>طلب الإذن والحصول على Token</button>
+      <div id="status"></div>
+      <div id="tokenContainer" style="display:none;">
+        <label style="margin-top: 16px;">FCM Token (انسخه واستخدمه في Postman):</label>
+        <div class="token-box" id="tokenBox"></div>
+        <button class="secondary" id="copyToken">نسخ Token</button>
+      </div>
+    </div>
+
+    <!-- STEP 3: Test in Postman -->
+    <div class="card">
+      <div class="step">
+        <div class="step-num">3</div>
+        <h2 style="margin: 0;">جرب من Postman</h2>
+      </div>
+      <p>أرسل طلب <code>POST {{base_url}}/auth/send-otp</code>:</p>
+      <pre style="background:#1e293b; padding:16px; border-radius:8px; overflow-x:auto; direction:ltr; text-align:left; font-size:13px;">{
+  "phone": "+967777172034",
+  "device_token": "&lt;لصق Token هنا&gt;",
+  "platform": "web",
+  "locale": "ar"
+}</pre>
+      <p class="hint">📱 ستصل لك رسالة إشعار في هذا المتصفح خلال ثوانٍ تحتوي على الـ OTP.</p>
+    </div>
+
+    <!-- Live notifications log -->
+    <div class="card">
+      <h2>📨 الإشعارات الواردة (مباشرة)</h2>
+      <div id="incoming" style="max-height: 300px; overflow-y: auto;">
+        <p class="hint" id="noNotifs">سيظهر هنا أي إشعار يصل لهذا المتصفح...</p>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js';
+    import { getMessaging, getToken, onMessage } from 'https://www.gstatic.com/firebasejs/10.13.0/firebase-messaging.js';
+
+    const $ = (id) => document.getElementById(id);
+
+    // Restore from localStorage
+    const savedConfig = localStorage.getItem('fcm_config');
+    const savedVapid = localStorage.getItem('fcm_vapid');
+    if (savedConfig) $('config').value = savedConfig;
+    if (savedVapid) $('vapid').value = savedVapid;
+    if (savedConfig && savedVapid) $('getToken').disabled = false;
+
+    $('saveConfig').addEventListener('click', () => {
+      const config = $('config').value.trim();
+      const vapid = $('vapid').value.trim();
+
+      if (!config || !vapid) {
+        showStatus('error', 'يرجى ملء الحقلين');
+        return;
+      }
+
+      try {
+        JSON.parse(config);
+      } catch (e) {
+        showStatus('error', 'JSON غير صحيح: ' + e.message);
+        return;
+      }
+
+      localStorage.setItem('fcm_config', config);
+      localStorage.setItem('fcm_vapid', vapid);
+      $('getToken').disabled = false;
+      showStatus('success', 'تم الحفظ. اضغط "طلب الإذن" بالأسفل.');
+    });
+
+    $('getToken').addEventListener('click', async () => {
+      try {
+        $('getToken').disabled = true;
+        showStatus('info', 'جاري التحميل...');
+
+        const config = JSON.parse(localStorage.getItem('fcm_config'));
+        const vapid = localStorage.getItem('fcm_vapid');
+
+        const app = initializeApp(config);
+        const messaging = getMessaging(app);
+
+        const reg = await navigator.serviceWorker.register('/firebase-messaging-sw.js');
+
+        // Pass config to service worker
+        reg.active?.postMessage({ type: 'FIREBASE_CONFIG', config });
+
+        const token = await getToken(messaging, {
+          vapidKey: vapid,
+          serviceWorkerRegistration: reg,
+        });
+
+        if (!token) {
+          showStatus('error', 'لم يتم الحصول على token. تأكد من قبول إذن الإشعارات.');
+          $('getToken').disabled = false;
+          return;
+        }
+
+        $('tokenBox').textContent = token;
+        $('tokenContainer').style.display = 'block';
+        showStatus('success', '✅ تم الحصول على Token بنجاح! انسخه واستخدمه في Postman.');
+
+        // Listen for foreground messages
+        onMessage(messaging, (payload) => {
+          console.log('FCM message received:', payload);
+          addNotification(payload);
+        });
+      } catch (e) {
+        console.error(e);
+        showStatus('error', 'خطأ: ' + e.message);
+        $('getToken').disabled = false;
+      }
+    });
+
+    $('copyToken').addEventListener('click', () => {
+      const token = $('tokenBox').textContent;
+      navigator.clipboard.writeText(token);
+      showStatus('success', '📋 تم النسخ!');
+    });
+
+    function showStatus(type, msg) {
+      $('status').className = 'status ' + type;
+      $('status').textContent = msg;
+    }
+
+    function addNotification(payload) {
+      $('noNotifs').style.display = 'none';
+      const div = document.createElement('div');
+      div.className = 'status success';
+      div.style.marginBottom = '8px';
+      const time = new Date().toLocaleTimeString('ar-SA');
+      div.innerHTML = `<strong>${payload.notification?.title || 'إشعار'}</strong> · ${time}<br/>${payload.notification?.body || ''}<br/><small style="opacity:.7;">data: ${JSON.stringify(payload.data || {})}</small>`;
+      $('incoming').prepend(div);
+    }
+  </script>
+</body>
+</html>

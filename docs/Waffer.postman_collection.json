@@ -1,0 +1,597 @@
+{
+    "info": {
+        "_postman_id": "waffer-api-collection-v1",
+        "name": "Waffer API — وفر",
+        "description": "Complete API collection for Waffer financial management app.\n\n## Setup\n1. Import this collection into Postman\n2. Import the `Waffer.postman_environment.json` environment\n3. Select the environment in the top-right dropdown\n4. Run **Auth → Send OTP** then **Verify OTP** to get `auth_token`\n5. The token is auto-saved and used by all protected endpoints\n\n## Base URL\n`{{base_url}}` defaults to `http://127.0.0.1:8000/api/v1`\n\n## Authentication\nUses Laravel Sanctum bearer tokens. Tokens are obtained via OTP flow:\n- `POST /auth/send-otp` → `POST /auth/verify-otp` (returns token)\n\n## How OTP delivery works\nThe OTP is **always randomly generated** (no hardcoded codes).\n\nDelivery channels (in order of preference):\n1. **Push notification** to a raw FCM `device_token` passed in the request body (great for new users / web testers)\n2. **Push notification** to all registered active devices of an existing user\n3. **Log file** fallback (`storage/logs/laravel.log`) when no FCM token is available — for development only\n\n### Get an FCM token from your browser\nOpen `http://127.0.0.1:8000/fcm-tester.html` to grab a real FCM token from your browser, then paste it as `device_token` in the Send OTP request — the OTP will arrive as a push notification.",
+        "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+    },
+    "auth": {
+        "type": "bearer",
+        "bearer": [{ "key": "token", "value": "{{auth_token}}", "type": "string" }]
+    },
+    "event": [
+        {
+            "listen": "prerequest",
+            "script": {
+                "type": "text/javascript",
+                "exec": ["pm.request.headers.add({ key: 'Accept', value: 'application/json' });", "pm.request.headers.add({ key: 'Accept-Language', value: pm.environment.get('locale') || 'ar' });"]
+            }
+        }
+    ],
+    "item": [
+        {
+            "name": "Auth",
+            "item": [
+                {
+                    "name": "1. Send OTP (smart)",
+                    "request": {
+                        "auth": { "type": "noauth" },
+                        "method": "POST",
+                        "header": [{ "key": "Content-Type", "value": "application/json" }],
+                        "url": { "raw": "{{base_url}}/auth/send-otp", "host": ["{{base_url}}"], "path": ["auth", "send-otp"] },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"phone\": \"+966555555555\",\n    \"device_token\": \"\",\n    \"platform\": \"web\",\n    \"locale\": \"ar\"\n}"
+                        },
+                        "description": "**Endpoint ذكي**: يكتشف تلقائياً إن كان الرقم لمستخدم موجود (login) أو جديد (register).\n\n## Body\n```json\n{\n  \"phone\": \"+966555555555\",\n  \"device_token\": \"<FCM token>\",  // اختياري — يُستخدم لإرسال OTP كإشعار Push\n  \"platform\": \"web\",                // اختياري — android | ios | web\n  \"locale\": \"ar\"                    // اختياري — لغة الإشعار\n}\n```\n\n## كيف تحصل على FCM token للاختبار؟\nافتح `http://127.0.0.1:8000/fcm-tester.html` في المتصفح، اقبل إذن الإشعارات، انسخ الـ token، والصقه هنا.\n\n## Response\n```json\n{\n  \"data\": {\n    \"is_new_user\": false,\n    \"expires_in\": 120,\n    \"cooldown_seconds\": 60,\n    \"delivery\": \"push\",\n    \"hint\": \"الرمز تم إرساله كإشعار على جهازك\"\n  },\n  \"message\": \"تم إرسال رمز تسجيل الدخول\"\n}\n```\n\n## ملاحظات\n- **OTP عشوائي دائماً** — لا يوجد كود ثابت (حتى في local).\n- إذا لم تُرسل `device_token` ولم يكن للمستخدم أجهزة مسجلة → الكود يُكتب في `storage/logs/laravel.log` فقط (`delivery: log`).\n- الكود صالح **دقيقتين فقط**.\n- لا يمكن إعادة الإرسال قبل **60 ثانية**."
+                    }
+                },
+                {
+                    "name": "2. Verify OTP (smart)",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "type": "text/javascript",
+                                "exec": [
+                                    "if (pm.response.code === 200) {",
+                                    "    const json = pm.response.json();",
+                                    "    if (json.data && json.data.token) {",
+                                    "        pm.environment.set('auth_token', json.data.token);",
+                                    "        pm.environment.set('user_id', json.data.user.id);",
+                                    "        console.log('✓ Logged in (existing user)');",
+                                    "    } else if (json.data && json.data.is_new_user) {",
+                                    "        console.log('ℹ Code verified — call /auth/register next');",
+                                    "    }",
+                                    "}"
+                                ]
+                            }
+                        }
+                    ],
+                    "request": {
+                        "auth": { "type": "noauth" },
+                        "method": "POST",
+                        "header": [{ "key": "Content-Type", "value": "application/json" }],
+                        "url": { "raw": "{{base_url}}/auth/verify-otp", "host": ["{{base_url}}"], "path": ["auth", "verify-otp"] },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"phone\": \"+966555555555\",\n    \"code\": \"123456\"\n}"
+                        },
+                        "description": "**Endpoint ذكي للتحقق**.\n\n## السلوك\n- إذا الرقم لمستخدم **موجود** → يُسجِّل دخوله ويُصدر `token`، يستهلك OTP.\n- إذا الرقم **جديد** → يُرجع `verified: true, is_new_user: true` بدون استهلاك الكود (لكي يُستخدم في `/auth/register`).\n\n## Response (موجود)\n```json\n{\n  \"data\": {\n    \"user\": { ... },\n    \"token\": \"1|abcdef...\",\n    \"is_new_user\": false\n  },\n  \"message\": \"تم تسجيل الدخول بنجاح\"\n}\n```\n\n## Response (جديد)\n```json\n{\n  \"data\": {\n    \"verified\": true,\n    \"is_new_user\": true\n  },\n  \"message\": \"تم التحقق، أكمل بيانات التسجيل\"\n}\n```"
+                    }
+                },
+                {
+                    "name": "3. Register (only if is_new_user)",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "type": "text/javascript",
+                                "exec": ["if (pm.response.code === 201) {", "    const json = pm.response.json();", "    if (json.data && json.data.token) {", "        pm.environment.set('auth_token', json.data.token);", "        pm.environment.set('user_id', json.data.user.id);", "        console.log('✓ Registered & logged in');", "    }", "}"]
+                            }
+                        }
+                    ],
+                    "request": {
+                        "auth": { "type": "noauth" },
+                        "method": "POST",
+                        "header": [{ "key": "Content-Type", "value": "application/json" }],
+                        "url": { "raw": "{{base_url}}/auth/register", "host": ["{{base_url}}"], "path": ["auth", "register"] },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"name\": \"Ahmed Test\",\n    \"phone\": \"+966555555555\",\n    \"code\": \"123456\",\n    \"email\": \"ahmed@test.com\",\n    \"monthly_income\": 8500,\n    \"currency\": \"SAR\",\n    \"language\": \"ar\"\n}"
+                        },
+                        "description": "إكمال تسجيل المستخدم الجديد بعد ما `verify-otp` رجّعت `is_new_user: true`.\n\nيُستخدم نفس الـ `code` الذي تحقق منه الـ verify-otp (الكود لم يُستهلك في الخطوة السابقة).\n\nالتسلسل الكامل لمستخدم جديد:\n```\n1. POST /auth/send-otp     { phone }\n2. POST /auth/verify-otp   { phone, code }   → is_new_user: true\n3. POST /auth/register     { phone, code, name, ... }\n```"
+                    }
+                },
+                {
+                    "name": "Firebase Login (ID Token)",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "type": "text/javascript",
+                                "exec": [
+                                    "if ([200, 201].includes(pm.response.code)) {",
+                                    "    const json = pm.response.json();",
+                                    "    if (json.data && json.data.token) {",
+                                    "        pm.environment.set('auth_token', json.data.token);",
+                                    "        pm.environment.set('user_id', json.data.user.id);",
+                                    "        console.log('✓ Firebase login OK — is_new_user=' + json.data.is_new_user);",
+                                    "    }",
+                                    "}"
+                                ]
+                            }
+                        }
+                    ],
+                    "request": {
+                        "auth": { "type": "noauth" },
+                        "method": "POST",
+                        "header": [{ "key": "Content-Type", "value": "application/json" }],
+                        "url": { "raw": "{{base_url}}/auth/firebase", "host": ["{{base_url}}"], "path": ["auth", "firebase"] },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"id_token\": \"PASTE_FIREBASE_ID_TOKEN_HERE\",\n    \"name\": \"Ahmed\",\n    \"currency\": \"SAR\",\n    \"language\": \"ar\"\n}"
+                        },
+                        "description": "**تسجيل الدخول/التسجيل عبر Firebase Phone Auth** (الطريقة الموصى بها للإنتاج).\n\n## كيف تحصل على `id_token`؟\n\nمن تطبيق Flutter:\n```dart\nawait FirebaseAuth.instance.verifyPhoneNumber(\n  phoneNumber: '+966555555555',\n  verificationCompleted: (cred) {},\n  codeSent: (verificationId, _) async {\n    // المستخدم يدخل الـ OTP\n    final cred = PhoneAuthProvider.credential(\n      verificationId: verificationId,\n      smsCode: enteredCode,\n    );\n    final userCred = await FirebaseAuth.instance\n        .signInWithCredential(cred);\n    final idToken = await userCred.user!.getIdToken();\n    // أرسل idToken للسيرفر\n  },\n  verificationFailed: (e) {},\n  codeAutoRetrievalTimeout: (_) {},\n);\n```\n\n## السلوك\n- إذا الرقم/الإيميل مسجَّل: يُسجِّل دخوله ويُصدر Sanctum token.\n- إذا غير مسجَّل: يُنشئ حساب جديد تلقائياً ويعيد `is_new_user: true`.\n\n## الحقول الاختيارية\n- `name`, `monthly_income`, `currency`, `language` — تُستخدم فقط عند التسجيل لأول مرة."
+                    }
+                },
+                {
+                    "name": "Get Authenticated User",
+                    "request": {
+                        "method": "GET",
+                        "url": { "raw": "{{base_url}}/auth/me", "host": ["{{base_url}}"], "path": ["auth", "me"] }
+                    }
+                },
+                {
+                    "name": "Update Profile",
+                    "request": {
+                        "method": "PUT",
+                        "header": [{ "key": "Content-Type", "value": "application/json" }],
+                        "url": { "raw": "{{base_url}}/auth/profile", "host": ["{{base_url}}"], "path": ["auth", "profile"] },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"name\": \"Ahmed Updated\",\n    \"email\": \"new@email.com\",\n    \"monthly_income\": 9500,\n    \"currency\": \"SAR\",\n    \"language\": \"ar\"\n}"
+                        }
+                    }
+                },
+                {
+                    "name": "Logout (current device)",
+                    "request": {
+                        "method": "POST",
+                        "url": { "raw": "{{base_url}}/auth/logout", "host": ["{{base_url}}"], "path": ["auth", "logout"] }
+                    }
+                },
+                {
+                    "name": "Logout (all devices)",
+                    "request": {
+                        "method": "POST",
+                        "url": { "raw": "{{base_url}}/auth/logout-all", "host": ["{{base_url}}"], "path": ["auth", "logout-all"] }
+                    }
+                }
+            ]
+        },
+        {
+            "name": "Dashboard & Insights",
+            "item": [
+                {
+                    "name": "Dashboard Summary",
+                    "request": {
+                        "method": "GET",
+                        "url": { "raw": "{{base_url}}/dashboard", "host": ["{{base_url}}"], "path": ["dashboard"] },
+                        "description": "ملخص الصفحة الرئيسية: الدخل، المصروفات، المتبقي، الادخار، آخر المعاملات، التنبيهات النشطة."
+                    }
+                },
+                {
+                    "name": "Expense Analysis",
+                    "request": {
+                        "method": "GET",
+                        "url": {
+                            "raw": "{{base_url}}/insights/expense-analysis?month={{current_month}}&year={{current_year}}",
+                            "host": ["{{base_url}}"],
+                            "path": ["insights", "expense-analysis"],
+                            "query": [
+                                { "key": "month", "value": "{{current_month}}" },
+                                { "key": "year", "value": "{{current_year}}" }
+                            ]
+                        },
+                        "description": "توزيع المصروفات على التصنيفات (لرسم Pie Chart)."
+                    }
+                },
+                {
+                    "name": "Monthly Report",
+                    "request": {
+                        "method": "GET",
+                        "url": {
+                            "raw": "{{base_url}}/insights/monthly-report?months=6",
+                            "host": ["{{base_url}}"],
+                            "path": ["insights", "monthly-report"],
+                            "query": [{ "key": "months", "value": "6" }]
+                        },
+                        "description": "تقرير شهري للأشهر الـ N الماضية: دخل/مصروف/ادخار (لرسم Bar Chart)."
+                    }
+                }
+            ]
+        },
+        {
+            "name": "Categories",
+            "item": [
+                {
+                    "name": "List Categories",
+                    "request": {
+                        "method": "GET",
+                        "url": {
+                            "raw": "{{base_url}}/categories?type=expense",
+                            "host": ["{{base_url}}"],
+                            "path": ["categories"],
+                            "query": [
+                                { "key": "type", "value": "expense", "description": "expense | income | saving" }
+                            ]
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "name": "Budgets",
+            "item": [
+                {
+                    "name": "Get Current Budget",
+                    "request": {
+                        "method": "GET",
+                        "url": { "raw": "{{base_url}}/budgets/current", "host": ["{{base_url}}"], "path": ["budgets", "current"] }
+                    }
+                },
+                {
+                    "name": "List Budgets",
+                    "request": {
+                        "method": "GET",
+                        "url": { "raw": "{{base_url}}/budgets", "host": ["{{base_url}}"], "path": ["budgets"] }
+                    }
+                },
+                {
+                    "name": "Create Budget",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "type": "text/javascript",
+                                "exec": ["if (pm.response.code === 201) {", "    const json = pm.response.json();", "    if (json.data && json.data.id) pm.environment.set('budget_id', json.data.id);", "}"]
+                            }
+                        }
+                    ],
+                    "request": {
+                        "method": "POST",
+                        "header": [{ "key": "Content-Type", "value": "application/json" }],
+                        "url": { "raw": "{{base_url}}/budgets", "host": ["{{base_url}}"], "path": ["budgets"] },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"month\": {{current_month}},\n    \"year\": {{current_year}},\n    \"total_amount\": 8000,\n    \"total_income\": 8500,\n    \"currency\": \"SAR\",\n    \"categories\": [\n        { \"category_id\": 1, \"allocated_amount\": 1500, \"alert_threshold\": 80 },\n        { \"category_id\": 2, \"allocated_amount\": 600, \"alert_threshold\": 80 },\n        { \"category_id\": 3, \"allocated_amount\": 800, \"alert_threshold\": 80 },\n        { \"category_id\": 4, \"allocated_amount\": 300, \"alert_threshold\": 80 },\n        { \"category_id\": 5, \"allocated_amount\": 500, \"alert_threshold\": 80 },\n        { \"category_id\": 8, \"allocated_amount\": 1500, \"alert_threshold\": 80 }\n    ]\n}"
+                        }
+                    }
+                },
+                {
+                    "name": "Show Budget",
+                    "request": {
+                        "method": "GET",
+                        "url": { "raw": "{{base_url}}/budgets/{{budget_id}}", "host": ["{{base_url}}"], "path": ["budgets", "{{budget_id}}"] }
+                    }
+                },
+                {
+                    "name": "Update Budget",
+                    "request": {
+                        "method": "PUT",
+                        "header": [{ "key": "Content-Type", "value": "application/json" }],
+                        "url": { "raw": "{{base_url}}/budgets/{{budget_id}}", "host": ["{{base_url}}"], "path": ["budgets", "{{budget_id}}"] },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"total_amount\": 9000,\n    \"categories\": [\n        { \"category_id\": 1, \"allocated_amount\": 1800, \"alert_threshold\": 75 }\n    ]\n}"
+                        }
+                    }
+                },
+                {
+                    "name": "Delete Budget",
+                    "request": {
+                        "method": "DELETE",
+                        "url": { "raw": "{{base_url}}/budgets/{{budget_id}}", "host": ["{{base_url}}"], "path": ["budgets", "{{budget_id}}"] }
+                    }
+                }
+            ]
+        },
+        {
+            "name": "Transactions",
+            "item": [
+                {
+                    "name": "List Transactions",
+                    "request": {
+                        "method": "GET",
+                        "url": {
+                            "raw": "{{base_url}}/transactions?per_page=20&type=expense&from=2026-04-01&to=2026-04-30",
+                            "host": ["{{base_url}}"],
+                            "path": ["transactions"],
+                            "query": [
+                                { "key": "per_page", "value": "20" },
+                                { "key": "type", "value": "expense", "description": "expense | income | saving" },
+                                { "key": "category_id", "value": "1", "disabled": true },
+                                { "key": "from", "value": "2026-04-01" },
+                                { "key": "to", "value": "2026-04-30" },
+                                { "key": "search", "value": "ستاربكس", "disabled": true }
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "Create Transaction",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "type": "text/javascript",
+                                "exec": ["if (pm.response.code === 201) {", "    const json = pm.response.json();", "    if (json.data && json.data.id) pm.environment.set('transaction_id', json.data.id);", "}"]
+                            }
+                        }
+                    ],
+                    "request": {
+                        "method": "POST",
+                        "header": [{ "key": "Content-Type", "value": "application/json" }],
+                        "url": { "raw": "{{base_url}}/transactions", "host": ["{{base_url}}"], "path": ["transactions"] },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"amount\": 65,\n    \"type\": \"expense\",\n    \"category_id\": 1,\n    \"description\": \"غداء\",\n    \"merchant\": \"مطعم البيك\",\n    \"transaction_date\": \"2026-04-26 14:30:00\",\n    \"currency\": \"SAR\"\n}"
+                        }
+                    }
+                },
+                {
+                    "name": "Show Transaction",
+                    "request": {
+                        "method": "GET",
+                        "url": { "raw": "{{base_url}}/transactions/{{transaction_id}}", "host": ["{{base_url}}"], "path": ["transactions", "{{transaction_id}}"] }
+                    }
+                },
+                {
+                    "name": "Update Transaction",
+                    "request": {
+                        "method": "PUT",
+                        "header": [{ "key": "Content-Type", "value": "application/json" }],
+                        "url": { "raw": "{{base_url}}/transactions/{{transaction_id}}", "host": ["{{base_url}}"], "path": ["transactions", "{{transaction_id}}"] },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"amount\": 75,\n    \"description\": \"غداء عمل\"\n}"
+                        }
+                    }
+                },
+                {
+                    "name": "Delete Transaction",
+                    "request": {
+                        "method": "DELETE",
+                        "url": { "raw": "{{base_url}}/transactions/{{transaction_id}}", "host": ["{{base_url}}"], "path": ["transactions", "{{transaction_id}}"] }
+                    }
+                }
+            ]
+        },
+        {
+            "name": "Saving Goals",
+            "item": [
+                {
+                    "name": "List Saving Goals",
+                    "request": {
+                        "method": "GET",
+                        "url": { "raw": "{{base_url}}/saving-goals", "host": ["{{base_url}}"], "path": ["saving-goals"] }
+                    }
+                },
+                {
+                    "name": "Create Saving Goal",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "type": "text/javascript",
+                                "exec": ["if (pm.response.code === 201) {", "    const json = pm.response.json();", "    if (json.data && json.data.id) pm.environment.set('saving_goal_id', json.data.id);", "}"]
+                            }
+                        }
+                    ],
+                    "request": {
+                        "method": "POST",
+                        "header": [{ "key": "Content-Type", "value": "application/json" }],
+                        "url": { "raw": "{{base_url}}/saving-goals", "host": ["{{base_url}}"], "path": ["saving-goals"] },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"title\": \"رحلة صيفية\",\n    \"target_amount\": 5000,\n    \"current_amount\": 500,\n    \"deadline\": \"2026-08-31\",\n    \"icon\": \"heroicon-o-globe-asia-australia\",\n    \"color\": \"#10B981\",\n    \"description\": \"رحلة لتركيا\"\n}"
+                        }
+                    }
+                },
+                {
+                    "name": "Show Saving Goal",
+                    "request": {
+                        "method": "GET",
+                        "url": { "raw": "{{base_url}}/saving-goals/{{saving_goal_id}}", "host": ["{{base_url}}"], "path": ["saving-goals", "{{saving_goal_id}}"] }
+                    }
+                },
+                {
+                    "name": "Update Saving Goal",
+                    "request": {
+                        "method": "PUT",
+                        "header": [{ "key": "Content-Type", "value": "application/json" }],
+                        "url": { "raw": "{{base_url}}/saving-goals/{{saving_goal_id}}", "host": ["{{base_url}}"], "path": ["saving-goals", "{{saving_goal_id}}"] },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"title\": \"رحلة شتوية\",\n    \"target_amount\": 6000\n}"
+                        }
+                    }
+                },
+                {
+                    "name": "Deposit to Saving Goal",
+                    "request": {
+                        "method": "POST",
+                        "header": [{ "key": "Content-Type", "value": "application/json" }],
+                        "url": { "raw": "{{base_url}}/saving-goals/{{saving_goal_id}}/deposit", "host": ["{{base_url}}"], "path": ["saving-goals", "{{saving_goal_id}}", "deposit"] },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"amount\": 500\n}"
+                        },
+                        "description": "إضافة مبلغ للهدف. عند تجاوز 50% أو 100% يُولَّد تنبيه تلقائي."
+                    }
+                },
+                {
+                    "name": "Delete Saving Goal",
+                    "request": {
+                        "method": "DELETE",
+                        "url": { "raw": "{{base_url}}/saving-goals/{{saving_goal_id}}", "host": ["{{base_url}}"], "path": ["saving-goals", "{{saving_goal_id}}"] }
+                    }
+                }
+            ]
+        },
+        {
+            "name": "Alerts",
+            "item": [
+                {
+                    "name": "List Alerts",
+                    "request": {
+                        "method": "GET",
+                        "url": {
+                            "raw": "{{base_url}}/alerts?unread_only=true",
+                            "host": ["{{base_url}}"],
+                            "path": ["alerts"],
+                            "query": [
+                                { "key": "unread_only", "value": "true" },
+                                { "key": "severity", "value": "warning", "disabled": true }
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "Mark Alert as Read",
+                    "request": {
+                        "method": "PUT",
+                        "url": { "raw": "{{base_url}}/alerts/{{alert_id}}/read", "host": ["{{base_url}}"], "path": ["alerts", "{{alert_id}}", "read"] }
+                    }
+                },
+                {
+                    "name": "Mark All as Read",
+                    "request": {
+                        "method": "PUT",
+                        "url": { "raw": "{{base_url}}/alerts/read-all", "host": ["{{base_url}}"], "path": ["alerts", "read-all"] }
+                    }
+                },
+                {
+                    "name": "Delete Alert",
+                    "request": {
+                        "method": "DELETE",
+                        "url": { "raw": "{{base_url}}/alerts/{{alert_id}}", "host": ["{{base_url}}"], "path": ["alerts", "{{alert_id}}"] }
+                    }
+                }
+            ]
+        },
+        {
+            "name": "Tips",
+            "item": [
+                {
+                    "name": "List Tips",
+                    "request": {
+                        "method": "GET",
+                        "url": {
+                            "raw": "{{base_url}}/tips?category_id=1",
+                            "host": ["{{base_url}}"],
+                            "path": ["tips"],
+                            "query": [{ "key": "category_id", "value": "1", "disabled": true }]
+                        }
+                    }
+                },
+                {
+                    "name": "Show Tip",
+                    "request": {
+                        "method": "GET",
+                        "url": { "raw": "{{base_url}}/tips/{{tip_id}}", "host": ["{{base_url}}"], "path": ["tips", "{{tip_id}}"] }
+                    }
+                }
+            ]
+        },
+        {
+            "name": "Mock Bank Data",
+            "item": [
+                {
+                    "name": "Import Mock Transactions",
+                    "request": {
+                        "method": "POST",
+                        "header": [{ "key": "Content-Type", "value": "application/json" }],
+                        "url": { "raw": "{{base_url}}/mock-bank/import", "host": ["{{base_url}}"], "path": ["mock-bank", "import"] },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"clear\": true\n}"
+                        },
+                        "description": "استيراد 30 معاملة بنكية تجريبية للمستخدم المسجَّل دخوله. مفيد للعرض التوضيحي والاختبار.\n\nاستخدم `clear: true` لحذف بيانات mock السابقة قبل الاستيراد."
+                    }
+                },
+                {
+                    "name": "Clear Mock Transactions",
+                    "request": {
+                        "method": "DELETE",
+                        "url": { "raw": "{{base_url}}/mock-bank/clear", "host": ["{{base_url}}"], "path": ["mock-bank", "clear"] }
+                    }
+                }
+            ]
+        },
+        {
+            "name": "Devices (FCM)",
+            "description": "تسجيل وإدارة Device Tokens لإرسال إشعارات Push عبر Firebase Cloud Messaging.\n\n**Flow:**\n1. عند تسجيل دخول المستخدم في تطبيق Flutter، احصل على FCM Token (عبر `firebase_messaging`).\n2. أرسله للسيرفر عبر `POST /devices/register`.\n3. عند تسجيل الخروج، استدعِ `POST /devices/unregister`.\n\nبعد التسجيل، أي Alert يُنشأ تلقائياً (تجاوز ميزانية، تحقيق هدف، رسالة admin) سيُرسل Push إلى أجهزة المستخدم.",
+            "item": [
+                {
+                    "name": "Register Device Token",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "type": "text/javascript",
+                                "exec": [
+                                    "if (pm.response.code === 201) {",
+                                    "    const json = pm.response.json();",
+                                    "    if (json.data && json.data.device_token) {",
+                                    "        pm.environment.set('device_id', json.data.device_token.id);",
+                                    "        console.log('✓ Device registered, id=' + json.data.device_token.id);",
+                                    "    }",
+                                    "}"
+                                ]
+                            }
+                        }
+                    ],
+                    "request": {
+                        "method": "POST",
+                        "header": [{ "key": "Content-Type", "value": "application/json" }],
+                        "url": { "raw": "{{base_url}}/devices/register", "host": ["{{base_url}}"], "path": ["devices", "register"] },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"token\": \"REPLACE_WITH_FCM_TOKEN_FROM_FLUTTER\",\n    \"platform\": \"android\",\n    \"device_name\": \"Pixel 7\",\n    \"device_model\": \"Google Pixel 7\",\n    \"app_version\": \"1.0.0\",\n    \"locale\": \"ar\"\n}"
+                        },
+                        "description": "تسجيل أو تحديث FCM token للجهاز الحالي.\n\n**Body:**\n- `token` (required): FCM token من تطبيق Flutter.\n- `platform` (required): `android` | `ios` | `web`.\n- `device_name` / `device_model` / `app_version` (optional): معلومات الجهاز للوحة الإدارة.\n- `locale` (optional): `ar` | `en` — لتحديد لغة الإشعار."
+                    }
+                },
+                {
+                    "name": "List My Devices",
+                    "request": {
+                        "method": "GET",
+                        "url": { "raw": "{{base_url}}/devices", "host": ["{{base_url}}"], "path": ["devices"] },
+                        "description": "قائمة بجميع الأجهزة المسجَّلة للمستخدم الحالي مع حالتها."
+                    }
+                },
+                {
+                    "name": "Send Test Push (to me)",
+                    "request": {
+                        "method": "POST",
+                        "header": [{ "key": "Content-Type", "value": "application/json" }],
+                        "url": { "raw": "{{base_url}}/devices/test-push", "host": ["{{base_url}}"], "path": ["devices", "test-push"] },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"title\": \"اختبار من Postman\",\n    \"body\": \"إذا وصلك هذا الإشعار، فالتكامل يعمل بنجاح!\"\n}"
+                        },
+                        "description": "إرسال إشعار تجريبي لجميع أجهزة المستخدم الحالي. مفيد للتحقق من صحة الإعداد بدون إنشاء Alert في قاعدة البيانات.\n\n**Response:**\n```json\n{\n  \"data\": { \"sent\": 1, \"failed\": 0 },\n  \"message\": \"تم تنفيذ الإرسال (sent=1, failed=0)\"\n}\n```"
+                    }
+                },
+                {
+                    "name": "Unregister Device Token",
+                    "request": {
+                        "method": "POST",
+                        "header": [{ "key": "Content-Type", "value": "application/json" }],
+                        "url": { "raw": "{{base_url}}/devices/unregister", "host": ["{{base_url}}"], "path": ["devices", "unregister"] },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"token\": \"REPLACE_WITH_FCM_TOKEN_FROM_FLUTTER\"\n}"
+                        },
+                        "description": "إلغاء تسجيل توكن (عند تسجيل الخروج أو حذف التطبيق)."
+                    }
+                }
+            ]
+        }
+    ],
+    "variable": [
+        { "key": "base_url", "value": "http://127.0.0.1:8000/api/v1", "type": "string" }
+    ]
+}

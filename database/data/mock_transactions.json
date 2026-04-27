@@ -1,0 +1,249 @@
+{
+    "metadata": {
+        "description": "معاملات بنكية تجريبية لمحاكاة تطبيق Waffer",
+        "currency": "SAR",
+        "version": "1.0"
+    },
+    "transactions": [
+        {
+            "amount": 8500,
+            "type": "income",
+            "category_slug": "salary",
+            "description": "راتب شهري",
+            "merchant": "شركة التقنية المتقدمة",
+            "days_ago": 28
+        },
+        {
+            "amount": 1200,
+            "type": "expense",
+            "category_slug": "housing",
+            "description": "إيجار الشقة",
+            "merchant": "ملاك العقار",
+            "days_ago": 27
+        },
+        {
+            "amount": 350,
+            "type": "expense",
+            "category_slug": "bills",
+            "description": "فاتورة الكهرباء",
+            "merchant": "الشركة السعودية للكهرباء",
+            "days_ago": 25
+        },
+        {
+            "amount": 180,
+            "type": "expense",
+            "category_slug": "bills",
+            "description": "فاتورة الإنترنت",
+            "merchant": "STC",
+            "days_ago": 24
+        },
+        {
+            "amount": 95,
+            "type": "expense",
+            "category_slug": "bills",
+            "description": "فاتورة الموبايل",
+            "merchant": "Mobily",
+            "days_ago": 23
+        },
+        {
+            "amount": 240,
+            "type": "expense",
+            "category_slug": "food",
+            "description": "تسوق البقالة الأسبوعي",
+            "merchant": "كارفور",
+            "days_ago": 22
+        },
+        {
+            "amount": 65,
+            "type": "expense",
+            "category_slug": "food",
+            "description": "غداء عائلي",
+            "merchant": "مطعم البيك",
+            "days_ago": 21
+        },
+        {
+            "amount": 120,
+            "type": "expense",
+            "category_slug": "transport",
+            "description": "تعبئة وقود",
+            "merchant": "أرامكو",
+            "days_ago": 20
+        },
+        {
+            "amount": 45,
+            "type": "expense",
+            "category_slug": "food",
+            "description": "قهوة الصباح",
+            "merchant": "ستاربكس",
+            "days_ago": 19
+        },
+        {
+            "amount": 320,
+            "type": "expense",
+            "category_slug": "shopping",
+            "description": "ملابس",
+            "merchant": "H&M",
+            "days_ago": 18
+        },
+        {
+            "amount": 75,
+            "type": "expense",
+            "category_slug": "entertainment",
+            "description": "سينما",
+            "merchant": "VOX Cinemas",
+            "days_ago": 17
+        },
+        {
+            "amount": 180,
+            "type": "expense",
+            "category_slug": "food",
+            "description": "تسوق البقالة",
+            "merchant": "بنده",
+            "days_ago": 16
+        },
+        {
+            "amount": 35,
+            "type": "expense",
+            "category_slug": "transport",
+            "description": "أوبر",
+            "merchant": "Uber",
+            "days_ago": 15
+        },
+        {
+            "amount": 220,
+            "type": "expense",
+            "category_slug": "health",
+            "description": "كشف طبي",
+            "merchant": "مستشفى المملكة",
+            "days_ago": 14
+        },
+        {
+            "amount": 90,
+            "type": "expense",
+            "category_slug": "health",
+            "description": "أدوية",
+            "merchant": "صيدلية النهدي",
+            "days_ago": 14
+        },
+        {
+            "amount": 28,
+            "type": "expense",
+            "category_slug": "food",
+            "description": "عشاء سريع",
+            "merchant": "ماكدونالدز",
+            "days_ago": 13
+        },
+        {
+            "amount": 500,
+            "type": "saving",
+            "category_slug": "savings",
+            "description": "ادخار شهري",
+            "merchant": "حساب التوفير",
+            "days_ago": 12
+        },
+        {
+            "amount": 150,
+            "type": "expense",
+            "category_slug": "shopping",
+            "description": "مستلزمات منزلية",
+            "merchant": "إكيا",
+            "days_ago": 11
+        },
+        {
+            "amount": 60,
+            "type": "expense",
+            "category_slug": "transport",
+            "description": "تعبئة وقود",
+            "merchant": "ساسكو",
+            "days_ago": 10
+        },
+        {
+            "amount": 110,
+            "type": "expense",
+            "category_slug": "food",
+            "description": "تسوق البقالة",
+            "merchant": "العثيم",
+            "days_ago": 9
+        },
+        {
+            "amount": 250,
+            "type": "expense",
+            "category_slug": "education",
+            "description": "اشتراك Coursera",
+            "merchant": "Coursera",
+            "days_ago": 8
+        },
+        {
+            "amount": 42,
+            "type": "expense",
+            "category_slug": "entertainment",
+            "description": "اشتراك Netflix",
+            "merchant": "Netflix",
+            "days_ago": 7
+        },
+        {
+            "amount": 22,
+            "type": "expense",
+            "category_slug": "entertainment",
+            "description": "اشتراك Spotify",
+            "merchant": "Spotify",
+            "days_ago": 7
+        },
+        {
+            "amount": 85,
+            "type": "expense",
+            "category_slug": "food",
+            "description": "غداء عمل",
+            "merchant": "مطعم نندوز",
+            "days_ago": 6
+        },
+        {
+            "amount": 38,
+            "type": "expense",
+            "category_slug": "transport",
+            "description": "أوبر للمطار",
+            "merchant": "Uber",
+            "days_ago": 5
+        },
+        {
+            "amount": 145,
+            "type": "expense",
+            "category_slug": "food",
+            "description": "تسوق نهاية الأسبوع",
+            "merchant": "لولو هايبر",
+            "days_ago": 4
+        },
+        {
+            "amount": 1500,
+            "type": "income",
+            "category_slug": "extra-income",
+            "description": "مشروع جانبي",
+            "merchant": "عميل خاص",
+            "days_ago": 3
+        },
+        {
+            "amount": 55,
+            "type": "expense",
+            "category_slug": "food",
+            "description": "إفطار",
+            "merchant": "كافيه بيت",
+            "days_ago": 2
+        },
+        {
+            "amount": 75,
+            "type": "expense",
+            "category_slug": "transport",
+            "description": "تعبئة وقود",
+            "merchant": "أرامكو",
+            "days_ago": 1
+        },
+        {
+            "amount": 32,
+            "type": "expense",
+            "category_slug": "food",
+            "description": "غداء",
+            "merchant": "كنتاكي",
+            "days_ago": 1
+        }
+    ]
+}
