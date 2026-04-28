@@ -11,7 +11,9 @@ class BudgetCategoryResource extends JsonResource
     {
         return [
             'id' => $this->id,
-            'category' => new CategoryResource($this->whenLoaded('category')),
+            'category' => $this->relationLoaded('category') && $this->category
+                ? new CategoryResource($this->category)
+                : CategoryResource::emptyShape(),
             'allocated_amount' => (float) $this->allocated_amount,
             'spent_amount' => (float) $this->spent_amount,
             'remaining' => $this->remaining,

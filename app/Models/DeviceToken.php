@@ -64,4 +64,10 @@ class DeviceToken extends Model
     {
         return $query->where('platform', $platform);
     }
+
+    /** Devices registered before login (onboarding). */
+    public function scopeGuest($query)
+    {
+        return $query->whereNull('user_id');
+    }
 }

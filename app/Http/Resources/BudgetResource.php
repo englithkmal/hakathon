@@ -18,12 +18,12 @@ class BudgetResource extends JsonResource
             'total_spent' => (float) $this->total_spent,
             'remaining' => $this->remaining,
             'progress_percentage' => $this->progress_percentage,
-            'currency' => $this->currency,
-            'status' => $this->status,
-            'notes' => $this->notes,
+            'currency' => $this->currency ?? $request->user()?->currency ?? 'SAR',
+            'status' => $this->status ?? 'draft',
+            'notes' => $this->notes ?? '',
             'categories' => BudgetCategoryResource::collection($this->whenLoaded('categories')),
-            'created_at' => $this->created_at?->toIso8601String(),
-            'updated_at' => $this->updated_at?->toIso8601String(),
+            'created_at' => $this->created_at?->toIso8601String() ?? '',
+            'updated_at' => $this->updated_at?->toIso8601String() ?? '',
         ];
     }
 }

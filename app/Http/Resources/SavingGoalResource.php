@@ -11,19 +11,19 @@ class SavingGoalResource extends JsonResource
     {
         return [
             'id' => $this->id,
-            'title' => $this->title,
-            'description' => $this->description,
-            'icon' => $this->icon,
-            'color' => $this->color,
+            'title' => $this->title ?? '',
+            'description' => $this->description ?? '',
+            'icon' => $this->icon ?? '',
+            'color' => $this->color ?? '#94A3B8',
             'target_amount' => (float) $this->target_amount,
             'current_amount' => (float) $this->current_amount,
             'remaining' => $this->remaining,
             'progress_percentage' => $this->progress_percentage,
-            'currency' => $this->currency,
-            'start_date' => $this->start_date?->toDateString(),
-            'deadline' => $this->deadline?->toDateString(),
-            'status' => $this->status,
-            'created_at' => $this->created_at?->toIso8601String(),
+            'currency' => $this->currency ?? $request->user()?->currency ?? 'SAR',
+            'start_date' => $this->start_date?->toDateString() ?? '',
+            'deadline' => $this->deadline?->toDateString() ?? '',
+            'status' => $this->status ?? 'active',
+            'created_at' => $this->created_at?->toIso8601String() ?? '',
         ];
     }
 }

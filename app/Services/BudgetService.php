@@ -98,13 +98,20 @@ class BudgetService
         }
     }
 
-    public function getCurrentBudget(User $user): ?Budget
+    /**
+     * ميزانية المستخدم لشهر/سنة محددين (افتراضي: الشهر الحالي في توقيت التطبيق).
+     * يُستخدم في الـ API وفي /budgets/current — حالة **active** فقط (مثل منطق العرض الموحّد).
+     */
+    public function getCurrentBudget(User $user, ?int $month = null, ?int $year = null): ?Budget
     {
+        $month ??= (int) now()->month;
+        $year ??= (int) now()->year;
+
         return Budget::query()
             ->with(['categories.category'])
             ->where('user_id', $user->id)
-            ->where('month', now()->month)
-            ->where('year', now()->year)
+            ->where('month', $month)
+            ->where('year', $year)
             ->where('status', 'active')
             ->first();
     }

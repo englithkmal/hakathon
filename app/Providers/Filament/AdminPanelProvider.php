@@ -35,11 +35,11 @@ class AdminPanelProvider extends PanelProvider
             ->login()
             ->brandName(__('waffer.brand'))
             ->brandLogo(asset('images/waffer-logo.png'))
-            ->brandLogoHeight('2.6rem')
+            ->brandLogoHeight('5rem')
             ->favicon(asset('favicon.png'))
             ->colors([
                 'primary' => [
-                    50  => '#EEFBF8',
+                    50 => '#EEFBF8',
                     100 => '#D5F4EC',
                     200 => '#ABE7D7',
                     300 => '#7FD7C0',
@@ -52,7 +52,7 @@ class AdminPanelProvider extends PanelProvider
                     950 => '#082529',
                 ],
                 'success' => [
-                    50  => '#F1FBF4',
+                    50 => '#F1FBF4',
                     100 => '#DBF5E1',
                     200 => '#B7EBC4',
                     300 => '#85DA9D',

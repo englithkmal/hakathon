@@ -120,4 +120,58 @@ class DeviceController extends Controller
             'تم تنفيذ الإرسال (sent='.$result['sent'].', failed='.$result['failed'].')'
         );
     }
+
+    /**
+     * Register FCM token before login (e.g. during onboarding). Same token is
+     * linked to the user automatically after authenticated POST devices/register.
+     */
+    public function registerGuest(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'token' => ['required', 'string', 'max:512'],
+            'platform' => ['required', Rule::in(['android', 'ios', 'web'])],
+            'device_name' => ['nullable', 'string', 'max:255'],
+            'device_model' => ['nullable', 'string', 'max:255'],
+            'app_version' => ['nullable', 'string', 'max:50'],
+            'locale' => ['nullable', Rule::in(['ar', 'en'])],
+        ]);
+
+        $deviceToken = DeviceToken::firstOrNew(['token' => $data['token']]);
+
+        $payload = [
+            'platform' => $data['platform'],
+            'device_name' => $data['device_name'] ?? null,
+            'device_model' => $data['device_model'] ?? null,
+            'app_version' => $data['app_version'] ?? null,
+            'locale' => $data['locale'] ?? 'ar',
+            'is_active' => true,
+            'last_used_at' => now(),
+            'failed_at' => null,
+            'failure_count' => 0,
+        ];
+
+        if ($deviceToken->exists && $deviceToken->user_id !== null) {
+            $deviceToken->fill($payload)->save();
+            $message = 'الجهاز مرتبط بحساب — تم تحديث بيانات الجهاز فقط';
+            $code = 200;
+        } else {
+            $deviceToken->fill(array_merge($payload, ['user_id' => null]))->save();
+            $message = 'تم تسجيل الجهاز لاستقبال الإشعارات العامة';
+            $code = $deviceToken->wasRecentlyCreated ? 201 : 200;
+        }
+
+        return $this->successResponse(
+            [
+                'device_token' => [
+                    'id' => $deviceToken->id,
+                    'platform' => $deviceToken->platform,
+                    'locale' => $deviceToken->locale,
+                    'is_active' => $deviceToken->is_active,
+                    'last_used_at' => $deviceToken->last_used_at,
+                ],
+            ],
+            $message,
+            $code
+        );
+    }
 }

@@ -13,6 +13,9 @@ use App\Http\Controllers\Api\TransactionController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('v1')->group(function () {
+    Route::post('devices/register-guest', [DeviceController::class, 'registerGuest'])
+        ->middleware('throttle:60,1');
+
     // Public auth routes
     Route::prefix('auth')->group(function () {
         Route::post('send-otp', [AuthController::class, 'sendOtp']);

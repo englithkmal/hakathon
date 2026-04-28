@@ -12,16 +12,18 @@ class TransactionResource extends JsonResource
         return [
             'id' => $this->id,
             'amount' => (float) $this->amount,
-            'currency' => $this->currency,
+            'currency' => $this->currency ?? $request->user()?->currency ?? 'SAR',
             'type' => $this->type,
-            'description' => $this->description,
-            'merchant' => $this->merchant,
-            'source' => $this->source,
-            'reference' => $this->reference,
-            'transaction_date' => $this->transaction_date?->toIso8601String(),
-            'category' => new CategoryResource($this->whenLoaded('category')),
-            'budget_id' => $this->budget_id,
-            'created_at' => $this->created_at?->toIso8601String(),
+            'description' => $this->description ?? '',
+            'merchant' => $this->merchant ?? '',
+            'source' => $this->source ?? 'manual',
+            'reference' => $this->reference ?? '',
+            'transaction_date' => $this->transaction_date?->toIso8601String() ?? '',
+            'category' => $this->relationLoaded('category') && $this->category
+                ? new CategoryResource($this->category)
+                : CategoryResource::emptyShape(),
+            'budget_id' => $this->budget_id ?? 0,
+            'created_at' => $this->created_at?->toIso8601String() ?? '',
         ];
     }
 }

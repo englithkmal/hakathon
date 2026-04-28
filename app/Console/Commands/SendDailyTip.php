@@ -94,7 +94,7 @@ class SendDailyTip extends Command
                 Alert::insert($chunk);
             }
 
-            $stats = $this->fcm->sendToUsers($users, [
+            $pushPayload = [
                 'title_ar' => '💡 نصيحة اليوم',
                 'title_en' => '💡 Tip of the day',
                 'body_ar' => $tip->title_ar,
@@ -105,7 +105,10 @@ class SendDailyTip extends Command
                     'click_action' => 'FLUTTER_NOTIFICATION_CLICK',
                 ],
                 'severity' => 'info',
-            ]);
+            ];
+
+            $stats = $this->fcm->sendToUsers($users, $pushPayload);
+            $stats = $this->fcm->mergeGuestPushStats($stats, $pushPayload);
 
             $this->info("✓ Pushed: {$stats['sent']} succeeded, {$stats['failed']} failed.");
 

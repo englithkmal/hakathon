@@ -90,6 +90,7 @@ class TipObserver
             ];
 
             $stats = $this->fcm->sendToUsers($users, $payload);
+            $stats = $this->fcm->mergeGuestPushStats($stats, $payload);
 
             Log::info('Tip broadcast dispatched.', [
                 'tip_id' => $tip->id,

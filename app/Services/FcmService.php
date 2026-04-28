@@ -96,6 +96,41 @@ class FcmService
     }
 
     /**
+     * Push to devices registered without an account (onboarding / guest installs).
+     *
+     * @return array{sent:int, failed:int}
+     */
+    public function sendToGuestDevices(array $payload): array
+    {
+        $tokens = DeviceToken::query()
+            ->guest()
+            ->where('is_active', true)
+            ->get();
+
+        if ($tokens->isEmpty()) {
+            return ['sent' => 0, 'failed' => 0];
+        }
+
+        return $this->sendToTokens($tokens, $payload, null);
+    }
+
+    /**
+     * Merge guest push stats into cumulative broadcast stats.
+     *
+     * @param  array{sent:int, failed:int}  $stats
+     * @return array{sent:int, failed:int}
+     */
+    public function mergeGuestPushStats(array $stats, array $payload): array
+    {
+        $guest = $this->sendToGuestDevices($payload);
+
+        return [
+            'sent' => $stats['sent'] + $guest['sent'],
+            'failed' => $stats['failed'] + $guest['failed'],
+        ];
+    }
+
+    /**
      * Send to a raw collection of DeviceToken models.
      *
      * Payload keys:
