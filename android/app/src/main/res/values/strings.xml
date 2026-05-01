@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Single canonical app label used by every Android surface — launcher,
+         recents, notifications, Settings → Apps, etc. We intentionally
+         hard-code "وفر" (Arabic) for both system languages: marketing wants
+         the brand to read the same way on every device, regardless of the
+         system language. -->
+    <string name="app_name" translatable="false">وفر</string>
+</resources>

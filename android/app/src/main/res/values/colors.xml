@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="ic_launcher_background">#FFFFFF</color>
+    <!-- Waffer brand primary (Forest Green), matches the Figma design. -->
+    <color name="waffer_notification_color">#0D5237</color>
+</resources>

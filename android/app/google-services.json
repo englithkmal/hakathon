@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "128413572219",
+    "project_id": "molly-9a63d",
+    "storage_bucket": "molly-9a63d.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:128413572219:android:e29a9c857b6678932516de",
+        "android_client_info": {
+          "package_name": "com.example.molls_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBlMHVK1df_XqAe2SBu5h85TNqFV1lgG7M"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -1,10 +1,31 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Network access for Dio. Flutter auto-adds this in debug builds
+         but release builds need it declared explicitly. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+
+    <!-- Required for Android 13+ to display notifications. The runtime
+         prompt is triggered by FlutterLocalNotificationsPlugin
+         .requestNotificationsPermission() inside NotificationService. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+
     <application
-        android:label="hakathon"
+        android:label="@string/app_name"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:localeConfig="@xml/locales_config"
+        android:usesCleartextTraffic="true">
+
+        <!-- Single launcher entry point. Earlier builds had a parallel
+             `.LauncherAr` activity-alias so the home-screen label could flip
+             between "Waffer" / "وفر" with the in-app language toggle, but
+             that approach was crashing the process on Samsung Android 12
+             when the foreground activity's component was disabled in-place.
+             Per the product brief the brand should always read "وفر" anyway,
+             so we collapsed everything down to one component with that
+             single label (see `values/strings.xml`). -->
         <activity
             android:name=".MainActivity"
+            android:label="@string/app_name"
             android:exported="true"
             android:launchMode="singleTop"
             android:taskAffinity=""
@@ -12,19 +33,35 @@
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:hardwareAccelerated="true"
             android:windowSoftInputMode="adjustResize">
-            <!-- Specifies an Android theme to apply to this Activity as soon as
-                 the Android process has started. This theme is visible to the user
-                 while the Flutter UI initializes. After that, this theme continues
-                 to determine the Window background behind the Flutter UI. -->
+            <!-- Theme used as soon as the process has started, behind the
+                 Flutter UI while it initialises. -->
             <meta-data
-              android:name="io.flutter.embedding.android.NormalTheme"
-              android:resource="@style/NormalTheme"
-              />
+                android:name="io.flutter.embedding.android.NormalTheme"
+                android:resource="@style/NormalTheme"
+                />
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+
+        <!-- Default channel id used when an FCM notification payload doesn't
+             specify one. Must match NotificationService._channelId. -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="wafferapp_default" />
+
+        <!-- Monochrome status-bar icon used by FCM and flutter_local_notifications
+             when no icon is supplied. Android requires white-on-transparent. -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@drawable/ic_stat_notification" />
+
+        <!-- Tint color applied to the silhouette icon (Waffer brand primary). -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_color"
+            android:resource="@color/waffer_notification_color" />
+
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

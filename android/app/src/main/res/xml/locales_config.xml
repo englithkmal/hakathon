@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Declares the locales WafferApp ships translations for. Required for
+     Android 13+ per-app language picker (Settings → Apps → Waffer → Language)
+     and for AppCompat / LocaleManager APIs to round-trip the user's choice. -->
+<locale-config xmlns:android="http://schemas.android.com/apk/res/android">
+    <locale android:name="en"/>
+    <locale android:name="ar"/>
+</locale-config>

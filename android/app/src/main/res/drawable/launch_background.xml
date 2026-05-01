@@ -1,12 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Modify this file to customize your launch splash screen -->
+<!-- Splash screen shown by the OS while the Flutter engine boots. Layered as:
+     1. Solid white background.
+     2. Centred Waffer wordmark + icon (logo_full). -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item android:drawable="@android:color/white" />
 
-    <!-- You can insert your own image assets here -->
-    <!-- <item>
+    <item android:gravity="center">
         <bitmap
             android:gravity="center"
-            android:src="@mipmap/launch_image" />
-    </item> -->
+            android:src="@drawable/waffer_splash_logo" />
+    </item>
 </layer-list>
