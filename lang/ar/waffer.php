@@ -40,6 +40,10 @@ return [
             'label' => 'تنبيه',
             'plural' => 'التنبيهات',
         ],
+        'monthly_summary' => [
+            'label' => 'تقرير شهري',
+            'plural' => 'التقارير الشهرية',
+        ],
     ],
 
     'fields' => [

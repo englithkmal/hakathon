@@ -23,6 +23,8 @@ class TransactionResource extends JsonResource
                 ? new CategoryResource($this->category)
                 : CategoryResource::emptyShape(),
             'budget_id' => $this->budget_id ?? 0,
+            'saving_goal_id' => $this->saving_goal_id ?? 0,
+            'monthly_summary_id' => $this->monthly_summary_id ?? 0,
             'created_at' => $this->created_at?->toIso8601String() ?? '',
         ];
     }

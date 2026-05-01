@@ -68,33 +68,33 @@ class SendDailyTip extends Command
         }
 
         try {
-            $rows = $users->map(fn (User $user) => [
-                'user_id' => $user->id,
-                'budget_category_id' => null,
-                'saving_goal_id' => null,
-                'type' => 'tip',
-                'severity' => 'info',
-                'title_ar' => '💡 '.$tip->title_ar,
-                'title_en' => '💡 '.$tip->title_en,
-                'message_ar' => $tip->content_ar,
-                'message_en' => $tip->content_en,
-                'payload' => json_encode([
-                    'tip_id' => $tip->id,
-                    'category_id' => $tip->category_id,
-                    'icon' => $tip->icon,
-                    'source' => 'daily_scheduled',
-                ], JSON_UNESCAPED_UNICODE),
-                'is_read' => false,
-                'read_at' => null,
-                'created_at' => now(),
-                'updated_at' => now(),
-            ])->all();
-
-            foreach (array_chunk($rows, 500) as $chunk) {
-                Alert::insert($chunk);
+            // Create each alert via Eloquent so AlertObserver pushes with notification_id.
+            foreach ($users as $user) {
+                Alert::create([
+                    'user_id' => $user->id,
+                    'budget_category_id' => null,
+                    'saving_goal_id' => null,
+                    'type' => 'tip',
+                    'severity' => 'info',
+                    'title_ar' => '💡 '.$tip->title_ar,
+                    'title_en' => '💡 '.$tip->title_en,
+                    'message_ar' => $tip->content_ar,
+                    'message_en' => $tip->content_en,
+                    'icon' => $tip->icon ?: 'heroicon-o-light-bulb',
+                    'deeplink' => '/tips/'.$tip->id,
+                    'payload' => [
+                        'tip_id' => $tip->id,
+                        'category_id' => $tip->category_id,
+                        'icon' => $tip->icon,
+                        'source' => 'daily_scheduled',
+                    ],
+                    'is_read' => false,
+                    'read_at' => null,
+                ]);
             }
 
-            $pushPayload = [
+            // Guest devices only.
+            $guestPayload = [
                 'title_ar' => '💡 نصيحة اليوم',
                 'title_en' => '💡 Tip of the day',
                 'body_ar' => $tip->title_ar,
@@ -107,14 +107,14 @@ class SendDailyTip extends Command
                 'severity' => 'info',
             ];
 
-            $stats = $this->fcm->sendToUsers($users, $pushPayload);
-            $stats = $this->fcm->mergeGuestPushStats($stats, $pushPayload);
+            $stats = $this->fcm->sendToGuestDevices($guestPayload);
 
             $this->info("✓ Pushed: {$stats['sent']} succeeded, {$stats['failed']} failed.");
 
             Log::info('Daily tip dispatched.', [
                 'tip_id' => $tip->id,
                 'recipients' => $users->count(),
+                'alerts_created' => $users->count(),
                 'pushed' => $stats,
             ]);
 

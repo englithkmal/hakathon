@@ -47,35 +47,33 @@ class TipObserver
                 return;
             }
 
-            // 1) Persist Alert rows (so they show up in the in-app notifications list).
-            $rows = $users->map(fn (User $user) => [
-                'user_id' => $user->id,
-                'budget_category_id' => null,
-                'saving_goal_id' => null,
-                'type' => 'tip',
-                'severity' => 'info',
-                'title_ar' => '💡 '.$tip->title_ar,
-                'title_en' => '💡 '.$tip->title_en,
-                'message_ar' => $tip->content_ar,
-                'message_en' => $tip->content_en,
-                'payload' => json_encode([
-                    'tip_id' => $tip->id,
-                    'category_id' => $tip->category_id,
-                    'icon' => $tip->icon,
-                ], JSON_UNESCAPED_UNICODE),
-                'is_read' => false,
-                'read_at' => null,
-                'created_at' => now(),
-                'updated_at' => now(),
-            ])->all();
-
-            foreach (array_chunk($rows, 500) as $chunk) {
-                Alert::insert($chunk);
+            // Persist one alert per user through model events so AlertObserver
+            // can push FCM with the exact notification_id.
+            foreach ($users as $user) {
+                Alert::create([
+                    'user_id' => $user->id,
+                    'budget_category_id' => null,
+                    'saving_goal_id' => null,
+                    'type' => 'tip',
+                    'severity' => 'info',
+                    'title_ar' => '💡 '.$tip->title_ar,
+                    'title_en' => '💡 '.$tip->title_en,
+                    'message_ar' => $tip->content_ar,
+                    'message_en' => $tip->content_en,
+                    'icon' => $tip->icon ?: 'heroicon-o-light-bulb',
+                    'deeplink' => '/tips/'.$tip->id,
+                    'payload' => [
+                        'tip_id' => $tip->id,
+                        'category_id' => $tip->category_id,
+                        'icon' => $tip->icon,
+                    ],
+                    'is_read' => false,
+                    'read_at' => null,
+                ]);
             }
 
-            // 2) Push via FCM directly (insert() bypasses model events on purpose
-            //    so we don't fire AlertObserver thousands of times in a loop).
-            $payload = [
+            // Guest devices don't have user records/alerts, so push directly.
+            $guestPayload = [
                 'title_ar' => '💡 '.$tip->title_ar,
                 'title_en' => '💡 '.$tip->title_en,
                 'body_ar' => $tip->content_ar,
@@ -89,12 +87,12 @@ class TipObserver
                 'severity' => 'info',
             ];
 
-            $stats = $this->fcm->sendToUsers($users, $payload);
-            $stats = $this->fcm->mergeGuestPushStats($stats, $payload);
+            $stats = $this->fcm->sendToGuestDevices($guestPayload);
 
             Log::info('Tip broadcast dispatched.', [
                 'tip_id' => $tip->id,
                 'recipients' => $users->count(),
+                'alerts_created' => $users->count(),
                 'pushed' => $stats,
             ]);
         } catch (Throwable $e) {

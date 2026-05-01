@@ -35,6 +35,17 @@ class FcmService
     }
 
     /**
+     * Map stored/UI severity to FCM transport priority (Android/iOS).
+     * Only warning|critical get high priority; everything else maps to warning so delivery matches OTP reliability.
+     */
+    public static function mapTransportSeverity(?string $severity): string
+    {
+        $s = (string) $severity;
+
+        return in_array($s, ['warning', 'critical'], true) ? $s : 'warning';
+    }
+
+    /**
      * Send a notification to all active devices belonging to a user.
      * Uses the user's locale to localize the title/body.
      *
@@ -62,18 +73,22 @@ class FcmService
             return ['sent' => 0, 'failed' => 0];
         }
 
+        $transportSeverity = self::mapTransportSeverity($alert->severity);
+
         $payload = [
             'title_ar' => $alert->title_ar,
             'title_en' => $alert->title_en,
             'body_ar' => $alert->message_ar,
             'body_en' => $alert->message_en,
             'data' => [
+                'notification_id' => (string) $alert->id,
                 'alert_id' => (string) $alert->id,
                 'alert_type' => (string) $alert->type,
                 'severity' => (string) $alert->severity,
+                'deeplink' => (string) ($alert->deeplink ?? ''),
                 'click_action' => 'FLUTTER_NOTIFICATION_CLICK',
             ],
-            'severity' => $alert->severity,
+            'severity' => $transportSeverity,
         ];
 
         return $this->sendToUser($alert->user, $payload);

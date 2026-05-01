@@ -3,10 +3,15 @@
 namespace App\Filament\Resources\Budgets\Tables;
 
 use App\Filament\Exports\BudgetExporter;
+use App\Models\Budget;
+use App\Services\BudgetLinker;
+use Filament\Actions\Action;
+use Filament\Actions\ActionGroup;
 use Filament\Actions\BulkActionGroup;
 use Filament\Actions\ExportAction;
 use Filament\Actions\ExportBulkAction;
 use Filament\Actions\ViewAction;
+use Filament\Notifications\Notification;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
@@ -99,7 +104,28 @@ class BudgetsTable
                     }),
             ])
             ->recordActions([
-                ViewAction::make()->label('عرض'),
+                ActionGroup::make([
+                    ViewAction::make()->label('عرض'),
+
+                    Action::make('resync')
+                        ->label('إعادة المزامنة')
+                        ->icon('heroicon-o-arrow-path')
+                        ->color('warning')
+                        ->requiresConfirmation()
+                        ->modalHeading('إعادة مزامنة الميزانية')
+                        ->modalDescription('سيُعيد قراءة جميع المعاملات لهذا الشهر وحساب total_spent للميزانية و spent_amount لكل فئة.')
+                        ->modalSubmitActionLabel('مزامنة الآن')
+                        ->action(function (Budget $record, BudgetLinker $linker) {
+                            $linker->recalculateBudget($record);
+                            $record->refresh();
+
+                            Notification::make()
+                                ->title('تمت المزامنة')
+                                ->body("المصروف الإجمالي: {$record->total_spent} | الفئات: ".$record->categories()->count())
+                                ->success()
+                                ->send();
+                        }),
+                ])->iconButton(),
             ])
             ->headerActions([
                 ExportAction::make()

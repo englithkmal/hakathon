@@ -24,7 +24,13 @@ class AlertObserver
                 return;
             }
 
-            $this->fcm->sendForAlert($alert);
+            $stats = $this->fcm->sendForAlert($alert);
+            if (($stats['sent'] ?? 0) === 0 && ($stats['failed'] ?? 0) === 0) {
+                Log::info('Alert created but no FCM delivery (no active device tokens for user).', [
+                    'alert_id' => $alert->id,
+                    'user_id' => $alert->user_id,
+                ]);
+            }
         } catch (Throwable $e) {
             Log::warning('AlertObserver failed to dispatch push notification.', [
                 'alert_id' => $alert->id,

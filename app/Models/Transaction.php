@@ -14,6 +14,8 @@ class Transaction extends Model
         'user_id',
         'category_id',
         'budget_id',
+        'saving_goal_id',
+        'monthly_summary_id',
         'amount',
         'currency',
         'type',
@@ -45,5 +47,19 @@ class Transaction extends Model
     public function budget(): BelongsTo
     {
         return $this->belongsTo(Budget::class);
+    }
+
+    public function savingGoal(): BelongsTo
+    {
+        return $this->belongsTo(SavingGoal::class);
+    }
+
+    /**
+     * If this transaction was created as an allocation from a closed month's
+     * unallocated savings, this points at the source monthly_summary.
+     */
+    public function monthlySummary(): BelongsTo
+    {
+        return $this->belongsTo(MonthlySummary::class);
     }
 }

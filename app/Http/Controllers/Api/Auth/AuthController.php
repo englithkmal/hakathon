@@ -9,6 +9,7 @@ use App\Http\Requests\Auth\SendOtpRequest;
 use App\Http\Requests\Auth\UpdateProfileRequest;
 use App\Http\Requests\Auth\VerifyOtpRequest;
 use App\Http\Resources\UserResource;
+use App\Models\DeviceToken;
 use App\Models\User;
 use App\Services\FirebaseAuthService;
 use App\Services\OtpService;
@@ -56,6 +57,8 @@ class AuthController extends Controller
         if (! $user->is_active) {
             return $this->errorResponse('هذا الحساب معطّل', 403);
         }
+
+        $this->attachFcmDeviceToUser($user, $request);
 
         return $this->successResponse([
             'user' => new UserResource($user),
@@ -141,6 +144,8 @@ class AuthController extends Controller
 
             $user->forceFill(['phone_verified_at' => now()])->save();
 
+            $this->attachFcmDeviceToUser($user, $request);
+
             return $this->successResponse([
                 'user' => new UserResource($user),
                 'token' => $user->createToken('mobile')->plainTextToken,
@@ -174,6 +179,8 @@ class AuthController extends Controller
         ]);
 
         $user->forceFill(['phone_verified_at' => now()])->save();
+
+        $this->attachFcmDeviceToUser($user, $request);
 
         return $this->successResponse([
             'user' => new UserResource($user),
@@ -214,5 +221,33 @@ class AuthController extends Controller
         $request->user()->tokens()->delete();
 
         return $this->successResponse(null, 'تم تسجيل الخروج من جميع الأجهزة');
+    }
+
+    /**
+     * Link the same FCM token used with register-guest / send-otp to this user so Alert pushes reach the device.
+     * Accepts `device_token` or `token` (same body shape as register-guest).
+     */
+    protected function attachFcmDeviceToUser(User $user, Request $request): void
+    {
+        $raw = $request->input('device_token') ?: $request->input('token');
+        if (! is_string($raw) || trim($raw) === '') {
+            return;
+        }
+
+        DeviceToken::updateOrCreate(
+            ['token' => $raw],
+            [
+                'user_id' => $user->id,
+                'platform' => $request->input('platform') ?: 'android',
+                'device_name' => $request->input('device_name'),
+                'device_model' => $request->input('device_model'),
+                'app_version' => $request->input('app_version'),
+                'locale' => $request->input('locale') ?: $user->language ?: 'ar',
+                'is_active' => true,
+                'last_used_at' => now(),
+                'failed_at' => null,
+                'failure_count' => 0,
+            ]
+        );
     }
 }

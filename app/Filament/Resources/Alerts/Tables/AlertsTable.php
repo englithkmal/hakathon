@@ -36,9 +36,12 @@ class AlertsTable
                         'exceeded' => 'تجاوز الميزانية',
                         'goal_progress' => 'تقدم الهدف',
                         'goal_achieved' => 'تحقيق الهدف',
+                        'goal_off_track' => 'هدف متأخر',
                         'low_balance' => 'رصيد منخفض',
                         'tip' => 'نصيحة',
                         'system' => 'نظام',
+                        'admin_message' => 'رسالة إدارية',
+                        'monthly_summary_ready' => 'تقرير الشهر',
                         default => $state,
                     }),
 
@@ -78,9 +81,12 @@ class AlertsTable
                         'exceeded' => 'تجاوز الميزانية',
                         'goal_progress' => 'تقدم الهدف',
                         'goal_achieved' => 'تحقيق الهدف',
+                        'goal_off_track' => 'هدف متأخر',
                         'low_balance' => 'رصيد منخفض',
                         'tip' => 'نصيحة',
                         'system' => 'نظام',
+                        'admin_message' => 'رسالة إدارية',
+                        'monthly_summary_ready' => 'تقرير الشهر',
                     ]),
 
                 SelectFilter::make('severity')

@@ -34,6 +34,12 @@ try {
             default   => $event->dailyAt($time),
         };
     }
+
+    // Cleanup old in-app notifications (retention: 90 days by default).
+    Schedule::command('waffer:notifications-cleanup --days=90')
+        ->timezone('Asia/Riyadh')
+        ->dailyAt('03:30')
+        ->withoutOverlapping();
 } catch (\Throwable $e) {
     // Migration may not have run yet during initial install — fail silently.
     // Once notification_settings table exists, schedule will populate automatically.

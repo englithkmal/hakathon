@@ -20,6 +20,8 @@ class Alert extends Model
         'title_en',
         'message_ar',
         'message_en',
+        'icon',
+        'deeplink',
         'payload',
         'is_read',
         'read_at',

@@ -7,6 +7,8 @@ use App\Http\Controllers\Api\CategoryController;
 use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\Api\DeviceController;
 use App\Http\Controllers\Api\MockBankController;
+use App\Http\Controllers\Api\MonthlySummaryController;
+use App\Http\Controllers\Api\PeriodController;
 use App\Http\Controllers\Api\SavingGoalController;
 use App\Http\Controllers\Api\TipController;
 use App\Http\Controllers\Api\TransactionController;
@@ -34,6 +36,9 @@ Route::prefix('v1')->group(function () {
             Route::post('logout-all', [AuthController::class, 'logoutAll']);
         });
 
+        // Period (single source of truth for "active period" used by Dashboard/Budgets/Insights)
+        Route::get('period', [PeriodController::class, 'show']);
+
         // Dashboard / Insights
         Route::get('dashboard', [DashboardController::class, 'index']);
         Route::get('insights/expense-analysis', [DashboardController::class, 'expenseAnalysis']);
@@ -51,13 +56,28 @@ Route::prefix('v1')->group(function () {
 
         // Saving Goals
         Route::post('saving-goals/{savingGoal}/deposit', [SavingGoalController::class, 'deposit']);
+        Route::get('saving-goals/{savingGoal}/deposits', [SavingGoalController::class, 'deposits']);
+        Route::get('saving-goals/{savingGoal}/monthly-progress', [SavingGoalController::class, 'monthlyProgress']);
         Route::apiResource('saving-goals', SavingGoalController::class);
 
-        // Alerts
+        // Monthly Summaries (immutable end-of-month snapshots)
+        Route::get('monthly-summaries', [MonthlySummaryController::class, 'index']);
+        Route::get('monthly-summaries/{year}/{month}', [MonthlySummaryController::class, 'show'])
+            ->whereNumber(['year', 'month']);
+        Route::post('monthly-summaries/{monthlySummary}/allocate', [MonthlySummaryController::class, 'allocate']);
+
+        // Alerts (legacy compatibility)
         Route::get('alerts', [AlertController::class, 'index']);
         Route::put('alerts/read-all', [AlertController::class, 'markAllAsRead']);
         Route::put('alerts/{alert}/read', [AlertController::class, 'markAsRead']);
         Route::delete('alerts/{alert}', [AlertController::class, 'destroy']);
+
+        // Notifications (cursor-based, app-facing)
+        Route::get('notifications', [AlertController::class, 'index']);
+        Route::post('notifications/{alert}/read', [AlertController::class, 'markAsRead']);
+        Route::post('notifications/read-all', [AlertController::class, 'markAllAsRead']);
+        Route::get('notifications/unread-count', [AlertController::class, 'unreadCount']);
+        Route::delete('notifications/{alert}', [AlertController::class, 'destroy']);
 
         // Tips
         Route::get('tips', [TipController::class, 'index']);

@@ -147,7 +147,7 @@ class ListAlerts extends ListRecords
                                     'severity' => $data['severity'],
                                     'click_action' => 'FLUTTER_NOTIFICATION_CLICK',
                                 ],
-                                'severity' => $data['severity'],
+                                'severity' => FcmService::mapTransportSeverity($data['severity']),
                             ];
 
                             $stats = ['sent' => 0, 'failed' => 0];

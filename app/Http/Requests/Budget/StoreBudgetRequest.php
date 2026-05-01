@@ -16,6 +16,7 @@ class StoreBudgetRequest extends FormRequest
         return [
             'month' => ['nullable', 'integer', 'min:1', 'max:12'],
             'year' => ['nullable', 'integer', 'min:2020', 'max:2100'],
+            'period_start' => ['nullable', 'date'],
             'total_income' => ['nullable', 'numeric', 'min:0'],
             'total_amount' => ['nullable', 'numeric', 'min:0'],
             'currency' => ['nullable', 'string', 'in:SAR,JOD,USD,AED,EUR'],

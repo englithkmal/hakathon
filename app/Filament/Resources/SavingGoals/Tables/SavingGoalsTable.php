@@ -3,10 +3,15 @@
 namespace App\Filament\Resources\SavingGoals\Tables;
 
 use App\Filament\Exports\SavingGoalExporter;
+use App\Models\SavingGoal;
+use App\Services\SavingGoalLinker;
+use Filament\Actions\Action;
+use Filament\Actions\ActionGroup;
 use Filament\Actions\BulkActionGroup;
 use Filament\Actions\ExportAction;
 use Filament\Actions\ExportBulkAction;
 use Filament\Actions\ViewAction;
+use Filament\Notifications\Notification;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
@@ -83,7 +88,29 @@ class SavingGoalsTable
                     ]),
             ])
             ->recordActions([
-                ViewAction::make()->label('عرض'),
+                ActionGroup::make([
+                    ViewAction::make()->label('عرض'),
+
+                    Action::make('recompute')
+                        ->label('إعادة حساب الرصيد')
+                        ->icon('heroicon-o-arrow-path')
+                        ->color('warning')
+                        ->requiresConfirmation()
+                        ->modalHeading('إعادة احتساب رصيد الهدف')
+                        ->modalDescription('سيتم احتساب current_amount من مجموع المعاملات المرتبطة بهذا الهدف (transactions حيث type=saving). يُستخدم لو ظهر فرق بين الإيداعات والرصيد المعروض.')
+                        ->modalSubmitActionLabel('إعادة الاحتساب')
+                        ->action(function (SavingGoal $record, SavingGoalLinker $linker) {
+                            $oldAmount = $record->current_amount;
+                            $linker->recompute($record);
+                            $record->refresh();
+
+                            Notification::make()
+                                ->title('تم إعادة الحساب')
+                                ->body("الرصيد قبل: {$oldAmount} → بعد: {$record->current_amount}")
+                                ->success()
+                                ->send();
+                        }),
+                ])->iconButton(),
             ])
             ->headerActions([
                 ExportAction::make()

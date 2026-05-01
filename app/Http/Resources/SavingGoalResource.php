@@ -23,6 +23,12 @@ class SavingGoalResource extends JsonResource
             'start_date' => $this->start_date?->toDateString() ?? '',
             'deadline' => $this->deadline?->toDateString() ?? '',
             'status' => $this->status ?? 'active',
+            'pace' => [
+                'expected_at_today' => $this->expected_at_today,
+                'monthly_target' => $this->monthly_target,
+                'delta' => $this->pace_delta,
+                'status' => $this->pace_status,
+            ],
             'created_at' => $this->created_at?->toIso8601String() ?? '',
         ];
     }

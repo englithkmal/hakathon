@@ -40,6 +40,10 @@ return [
             'label' => 'Alert',
             'plural' => 'Alerts',
         ],
+        'monthly_summary' => [
+            'label' => 'Monthly Report',
+            'plural' => 'Monthly Reports',
+        ],
     ],
 
     'fields' => [
