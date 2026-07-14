@@ -1,10 +1,8 @@
-import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../../core/errors/exceptions.dart';
-import '../../../../core/network/api_endpoints.dart';
-import '../../../../core/network/dio_provider.dart';
-import '../../../../core/network/error_interceptor.dart';
+import '../../../../core/supabase/supabase_provider.dart';
 import '../models/category_model.dart';
 
 abstract class CategoriesRemoteDataSource {
@@ -12,45 +10,38 @@ abstract class CategoriesRemoteDataSource {
 }
 
 class CategoriesRemoteDataSourceImpl implements CategoriesRemoteDataSource {
-  CategoriesRemoteDataSourceImpl(this._dio);
+  CategoriesRemoteDataSourceImpl(this._supabase);
 
-  final Dio _dio;
+  final SupabaseClient _supabase;
 
   @override
   Future<List<CategoryModel>> fetchAll() async {
     try {
-      final res = await _dio.get(
-        ApiEndpoints.categories,
-        queryParameters: {'_t': DateTime.now().millisecondsSinceEpoch},
-        options: Options(
-          headers: const {
-            'Cache-Control': 'no-cache',
-            'Pragma': 'no-cache',
-          },
-        ),
-      );
-      final body = res.data;
-      if (body is! Map<String, dynamic>) {
-        throw const ServerException(
-          message: 'Unexpected /categories response shape.',
-        );
-      }
-      final raw = body['data'] ?? body['items'] ?? body;
-      final list = raw is List ? raw : const [];
-      return list
-          .whereType<Map>()
-          .map((e) => CategoryModel.fromJson(e.cast<String, dynamic>()))
+      final userId = _supabase.auth.currentUser?.id;
+      // الفئات الافتراضية (is_default = true) + فئات المستخدم الخاصة
+      final query = _supabase
+          .from('categories')
+          .select()
+          .order('sort_order');
+
+      final data = await query as List;
+      return data
+          .map((e) => CategoryModel.fromJson(Map<String, dynamic>.from(e)))
+          .where((c) =>
+              c.isDefault ||
+              userId == null ||
+              true) // RLS تتولى الفلترة فعلياً
           .toList()
         ..sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
-    } on DioException catch (e) {
-      final inner = e.error;
-      if (inner is AppException) throw inner;
-      throw mapDioException(e);
+    } on PostgrestException catch (e) {
+      throw ServerException(message: e.message);
+    } catch (e) {
+      throw UnknownException(message: e.toString());
     }
   }
 }
 
 final categoriesRemoteDataSourceProvider =
     Provider<CategoriesRemoteDataSource>((ref) {
-  return CategoriesRemoteDataSourceImpl(ref.watch(dioProvider));
+  return CategoriesRemoteDataSourceImpl(ref.watch(supabaseClientProvider));
 });

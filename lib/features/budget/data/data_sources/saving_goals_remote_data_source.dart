@@ -1,16 +1,12 @@
-import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../../core/errors/exceptions.dart';
-import '../../../../core/network/api_endpoints.dart';
-import '../../../../core/network/dio_provider.dart';
-import '../../../../core/network/error_interceptor.dart';
+import '../../../../core/supabase/supabase_provider.dart';
 import '../../../transactions/data/models/transaction_model.dart';
 import '../models/goal_monthly_progress.dart';
 import '../models/saving_goal_model.dart';
 
-/// Page of `transaction(type=saving)` rows for a single goal — returned
-/// by `GET /saving-goals/{id}/deposits`.
 class GoalDepositsPage {
   const GoalDepositsPage({
     required this.items,
@@ -18,34 +14,14 @@ class GoalDepositsPage {
     required this.lastPage,
     required this.total,
   });
-
   final List<TransactionModel> items;
   final int currentPage;
   final int lastPage;
   final int total;
-
   bool get hasMore => currentPage < lastPage;
 }
 
-/// Speaks to the per-goal endpoints documented under
-/// "المرحلة 8 — أهداف الادخار":
-///
-///  * `POST /saving-goals/{id}/deposit`
-///  * `GET /saving-goals/{id}/deposits`
-///  * `GET /saving-goals/{id}/monthly-progress`
-///
-/// The CRUD endpoints (`POST /saving-goals`, `PUT /saving-goals/{id}`,
-/// `DELETE /saving-goals/{id}`, `GET /saving-goals?status=...`) live on
-/// `BudgetRemoteDataSource` because they're already consumed by the
-/// budget tab — this class only carries the goal-detail / deposit-flow
-/// methods to keep both surfaces small.
 abstract class SavingGoalsRemoteDataSource {
-  /// `POST /saving-goals/{id}/deposit` — records a deposit and returns
-  /// the freshly-updated goal (the server folds the deposit into a
-  /// backing `transaction(type=saving, saving_goal_id=id)` row).
-  ///
-  /// [transactionDate] should be `YYYY-MM-DD`. Omit it to let the
-  /// server use today.
   Future<SavingGoalModel> deposit({
     required int goalId,
     required double amount,
@@ -53,9 +29,6 @@ abstract class SavingGoalsRemoteDataSource {
     String? transactionDate,
   });
 
-  /// `GET /saving-goals/{id}/deposits` — paginated `type=saving`
-  /// transactions for the goal. Optional [year] / [month] filters
-  /// narrow the page to a single month.
   Future<GoalDepositsPage> fetchDeposits({
     required int goalId,
     int page = 1,
@@ -64,14 +37,8 @@ abstract class SavingGoalsRemoteDataSource {
     int? month,
   });
 
-  /// `GET /saving-goals/{id}/monthly-progress` — month-by-month
-  /// expected-vs-deposited rollup. Used to render the
-  /// "كم وفّرت كل شهر؟" bar chart inside the goal detail screen.
   Future<GoalMonthlyProgress> fetchMonthlyProgress({required int goalId});
 
-  /// `PUT /saving-goals/{id}` — partial update. Only the supplied
-  /// fields are sent (everything else is left untouched server-side).
-  /// `status` accepts `active` | `paused` | `cancelled` | `achieved`.
   Future<SavingGoalModel> update({
     required int goalId,
     String? title,
@@ -85,15 +52,27 @@ abstract class SavingGoalsRemoteDataSource {
     String? status,
   });
 
-  /// `DELETE /saving-goals/{id}` — server cascades the underlying
-  /// `transaction(type=saving, saving_goal_id=...)` rows.
   Future<void> delete({required int goalId});
 }
 
-class SavingGoalsRemoteDataSourceImpl implements SavingGoalsRemoteDataSource {
-  SavingGoalsRemoteDataSourceImpl(this._dio);
+/// كاتيجوري افتراضية للادخار — يستخدمها التطبيق عند إنشاء سجل
+/// `transaction(type=saving)` بدون فئة مرتبطة بميزانية.
+/// عدّلها لتطابق `id` فئة "ادخار" الموجودة في جدول categories لديك،
+/// أو اتركها 0 إذا كانت `category_id` تقبل NULL.
+const int kSavingCategoryId = 0;
 
-  final Dio _dio;
+class SavingGoalsRemoteDataSourceImpl implements SavingGoalsRemoteDataSource {
+  SavingGoalsRemoteDataSourceImpl(this._supabase);
+
+  final SupabaseClient _supabase;
+
+  String get _userId {
+    final id = _supabase.auth.currentUser?.id;
+    if (id == null) {
+      throw const UnauthorizedException(message: 'غير مسجل الدخول', statusCode: 401);
+    }
+    return id;
+  }
 
   @override
   Future<SavingGoalModel> deposit({
@@ -103,18 +82,48 @@ class SavingGoalsRemoteDataSourceImpl implements SavingGoalsRemoteDataSource {
     String? transactionDate,
   }) async {
     try {
-      final body = <String, dynamic>{'amount': amount};
-      if (note != null && note.trim().isNotEmpty) body['note'] = note.trim();
-      if (transactionDate != null && transactionDate.isNotEmpty) {
-        body['transaction_date'] = transactionDate;
-      }
-      final res = await _dio.post(
-        ApiEndpoints.savingGoalDeposit(goalId),
-        data: body,
-      );
-      return SavingGoalModel.fromJson(_unwrapGoal(res.data, 'deposit'));
-    } on DioException catch (e) {
-      throw _unwrap(e);
+      final date = (transactionDate != null && transactionDate.isNotEmpty)
+          ? transactionDate
+          : _ymd(DateTime.now());
+
+      // 1) سجل عملية ادخار في transactions
+      final txBody = <String, dynamic>{
+        'user_id': _userId,
+        'amount': amount,
+        'currency': await _goalCurrency(goalId),
+        'type': 'saving',
+        'description': note ?? '',
+        'merchant': '',
+        'source': 'manual',
+        'reference': '',
+        'transaction_date': date,
+        'saving_goal_id': goalId,
+      };
+      if (kSavingCategoryId > 0) txBody['category_id'] = kSavingCategoryId;
+
+      await _supabase.from('transactions').insert(txBody);
+
+      // 2) زيادة current_amount على الهدف
+      final goalRow = await _supabase
+          .from('saving_goals')
+          .select()
+          .eq('id', goalId)
+          .single();
+
+      final newCurrent = _toDouble(goalRow['current_amount']) + amount;
+      final updated = await _supabase
+          .from('saving_goals')
+          .update({'current_amount': newCurrent})
+          .eq('id', goalId)
+          .select()
+          .single();
+
+      return _withPace(Map<String, dynamic>.from(updated));
+    } on PostgrestException catch (e) {
+      throw ServerException(message: e.message);
+    } catch (e) {
+      if (e is AppException) rethrow;
+      throw UnknownException(message: e.toString());
     }
   }
 
@@ -127,97 +136,126 @@ class SavingGoalsRemoteDataSourceImpl implements SavingGoalsRemoteDataSource {
     int? month,
   }) async {
     try {
-      final qp = <String, dynamic>{
-        'page': page,
-        'per_page': perPage,
-        '_t': DateTime.now().millisecondsSinceEpoch,
-      };
-      if (year != null) qp['year'] = year;
-      if (month != null) qp['month'] = month;
-      final res = await _dio.get(
-        ApiEndpoints.savingGoalDeposits(goalId),
-        queryParameters: qp,
-        options: _noCache(),
-      );
-      final body = res.data;
-      if (body is! Map<String, dynamic>) {
-        throw const ServerException(
-          message: 'Unexpected /saving-goals/{id}/deposits response shape.',
-        );
+      final from0 = (page - 1) * perPage;
+      final to0 = from0 + perPage - 1;
+
+      dynamic query = _supabase
+          .from('transactions')
+          .select('*, categories(*)')
+          .eq('user_id', _userId)
+          .eq('type', 'saving')
+          .eq('saving_goal_id', goalId);
+
+      if (year != null && month != null) {
+        final first = DateTime(year, month, 1);
+        final last = DateTime(year, month + 1, 0);
+        query = query
+            .gte('transaction_date', _ymd(first))
+            .lte('transaction_date', _ymd(last)) as dynamic;
       }
-      // Three response shapes ship in the wild — handle all three so
-      // deploys can flip without breaking the client:
-      //
-      //   1. **New canonical** (current spec):
-      //      `data: { items: [...], meta: { current_page, last_page,
-      //                                     total, sum } }`
-      //      The `sum` field on meta is the goal's `current_amount`
-      //      across all pages — used as a refresh hint for the goal
-      //      header without an extra round trip.
-      //
-      //   2. **Laravel paginator** (older deploys):
-      //      `data: { data: [...], current_page, last_page, total, ... }`
-      //
-      //   3. **Flat list** (very old deploys):
-      //      `data: [...]` with `meta` at the root.
-      final raw = body['data'];
-      List<Map<String, dynamic>> rows = const [];
-      Map<String, dynamic>? meta;
-      if (raw is List) {
-        rows = _castList(raw);
-        if (body['meta'] is Map<String, dynamic>) {
-          meta = body['meta'] as Map<String, dynamic>;
+
+      query = query
+          .order('transaction_date', ascending: false)
+          .range(from0, to0) as dynamic;
+
+      final res = await query.count(CountOption.exact);
+      final rows = (res.data as List).cast<Map<String, dynamic>>();
+      final total = res.count ?? rows.length;
+      final lastPage = (total / perPage).ceil().clamp(1, 999999);
+
+      final items = rows.map((r) {
+        final m = Map<String, dynamic>.from(r);
+        if (m.containsKey('categories')) {
+          m['category'] = m.remove('categories');
         }
-      } else if (raw is Map<String, dynamic>) {
-        if (raw['items'] is List) {
-          rows = _castList(raw['items'] as List);
-          if (raw['meta'] is Map<String, dynamic>) {
-            meta = raw['meta'] as Map<String, dynamic>;
-          } else if (body['meta'] is Map<String, dynamic>) {
-            meta = body['meta'] as Map<String, dynamic>;
-          } else {
-            meta = raw;
-          }
-        } else if (raw['data'] is List) {
-          rows = _castList(raw['data'] as List);
-          meta = raw;
-        }
-      }
-      final items = rows.map(TransactionModel.fromJson).toList();
+        return TransactionModel.fromJson(m);
+      }).toList();
+
       return GoalDepositsPage(
         items: items,
-        currentPage: _toInt(meta?['current_page'] ?? page, fallback: page),
-        lastPage: _toInt(meta?['last_page'] ?? page, fallback: page),
-        total: _toInt(meta?['total'] ?? items.length, fallback: items.length),
+        currentPage: page,
+        lastPage: lastPage,
+        total: total,
       );
-    } on DioException catch (e) {
-      throw _unwrap(e);
+    } on PostgrestException catch (e) {
+      throw ServerException(message: e.message);
+    } catch (e) {
+      if (e is AppException) rethrow;
+      throw UnknownException(message: e.toString());
     }
   }
 
   @override
-  Future<GoalMonthlyProgress> fetchMonthlyProgress({
-    required int goalId,
-  }) async {
+  Future<GoalMonthlyProgress> fetchMonthlyProgress({required int goalId}) async {
     try {
-      final res = await _dio.get(
-        ApiEndpoints.savingGoalMonthlyProgress(goalId),
-        queryParameters: {
-          '_t': DateTime.now().millisecondsSinceEpoch,
-        },
-        options: _noCache(),
-      );
-      final body = res.data;
-      if (body is! Map<String, dynamic>) {
-        throw const ServerException(
-          message: 'Unexpected /monthly-progress response shape.',
-        );
+      final goalRow = await _supabase
+          .from('saving_goals')
+          .select()
+          .eq('id', goalId)
+          .single();
+
+      final target = _toDouble(goalRow['target_amount']);
+      final currency = (goalRow['currency'] ?? 'SAR').toString();
+      final startStr = (goalRow['start_date'] ?? '').toString();
+      final deadlineStr = (goalRow['deadline'] ?? '').toString();
+
+      final start = DateTime.tryParse(startStr) ?? DateTime.now();
+      final deadline = DateTime.tryParse(deadlineStr) ?? start;
+      final totalMonths = _monthsBetween(start, deadline).clamp(1, 1000);
+      final monthlyTarget = target / totalMonths;
+
+      // كل عمليات الادخار لهذا الهدف
+      final txs = await _supabase
+          .from('transactions')
+          .select('amount, transaction_date')
+          .eq('user_id', _userId)
+          .eq('type', 'saving')
+          .eq('saving_goal_id', goalId) as List;
+
+      final byMonth = <String, double>{};
+      final countByMonth = <String, int>{};
+      for (final t in txs) {
+        final d = DateTime.tryParse((t['transaction_date'] ?? '').toString());
+        if (d == null) continue;
+        final key = '${d.year}-${d.month}';
+        byMonth[key] = (byMonth[key] ?? 0) + _toDouble(t['amount']);
+        countByMonth[key] = (countByMonth[key] ?? 0) + 1;
       }
-      final inner = body['data'];
-      final map = inner is Map<String, dynamic> ? inner : body;
-      return GoalMonthlyProgress.fromJson(map);
-    } on DioException catch (e) {
-      throw _unwrap(e);
+
+      final now = DateTime.now();
+      final end = deadline.isBefore(now) ? deadline : now;
+
+      final items = <Map<String, dynamic>>[];
+      var cursor = DateTime(start.year, start.month, 1);
+      while (!cursor.isAfter(DateTime(end.year, end.month, 1))) {
+        final key = '${cursor.year}-${cursor.month}';
+        final deposited = byMonth[key] ?? 0;
+        final delta = deposited - monthlyTarget;
+        items.add({
+          'year': cursor.year,
+          'month': cursor.month,
+          'deposited': deposited,
+          'transaction_count': countByMonth[key] ?? 0,
+          'expected': monthlyTarget,
+          'delta': delta,
+          'on_track': delta >= -0.01,
+        });
+        cursor = DateTime(cursor.year, cursor.month + 1, 1);
+      }
+
+      return GoalMonthlyProgress.fromJson({
+        'items': items,
+        'meta': {
+          'monthly_target': monthlyTarget,
+          'goal_id': goalId,
+          'currency': currency,
+        },
+      });
+    } on PostgrestException catch (e) {
+      throw ServerException(message: e.message);
+    } catch (e) {
+      if (e is AppException) rethrow;
+      throw UnknownException(message: e.toString());
     }
   }
 
@@ -235,87 +273,130 @@ class SavingGoalsRemoteDataSourceImpl implements SavingGoalsRemoteDataSource {
     String? status,
   }) async {
     try {
-      final body = <String, dynamic>{};
+      final body = <String, dynamic>{
+        'updated_at': DateTime.now().toIso8601String(),
+      };
       if (title != null && title.isNotEmpty) body['title'] = title;
       if (description != null) body['description'] = description;
       if (targetAmount != null) body['target_amount'] = targetAmount;
-      if (deadline != null && deadline.isNotEmpty) {
-        body['deadline'] = deadline;
-      }
-      if (startDate != null && startDate.isNotEmpty) {
-        body['start_date'] = startDate;
-      }
+      if (deadline != null && deadline.isNotEmpty) body['deadline'] = deadline;
+      if (startDate != null && startDate.isNotEmpty) body['start_date'] = startDate;
       if (icon != null) body['icon'] = icon;
       if (color != null) body['color'] = color;
-      if (currency != null && currency.isNotEmpty) {
-        body['currency'] = currency;
-      }
+      if (currency != null && currency.isNotEmpty) body['currency'] = currency;
       if (status != null && status.isNotEmpty) body['status'] = status;
-      final res = await _dio.put(
-        ApiEndpoints.savingGoalById(goalId),
-        data: body,
-      );
-      return SavingGoalModel.fromJson(_unwrapGoal(res.data, 'update'));
-    } on DioException catch (e) {
-      throw _unwrap(e);
+
+      final row = await _supabase
+          .from('saving_goals')
+          .update(body)
+          .eq('id', goalId)
+          .select()
+          .single();
+
+      return _withPace(Map<String, dynamic>.from(row));
+    } on PostgrestException catch (e) {
+      throw ServerException(message: e.message);
+    } catch (e) {
+      if (e is AppException) rethrow;
+      throw UnknownException(message: e.toString());
     }
   }
 
   @override
   Future<void> delete({required int goalId}) async {
     try {
-      await _dio.delete(ApiEndpoints.savingGoalById(goalId));
-    } on DioException catch (e) {
-      throw _unwrap(e);
+      // حذف الـ transactions المرتبطة (cascade يدوي)
+      await _supabase
+          .from('transactions')
+          .delete()
+          .eq('saving_goal_id', goalId)
+          .eq('type', 'saving');
+      await _supabase.from('saving_goals').delete().eq('id', goalId);
+    } on PostgrestException catch (e) {
+      throw ServerException(message: e.message);
+    } catch (e) {
+      if (e is AppException) rethrow;
+      throw UnknownException(message: e.toString());
     }
   }
 
-  /// Pulls the goal map out of either `{ data: {...} }` or a flat top-
-  /// level shape (some Laravel resource wrappers skip the envelope).
-  Map<String, dynamic> _unwrapGoal(Object? body, String label) {
-    if (body is! Map<String, dynamic>) {
-      throw ServerException(
-        message: 'Unexpected /saving-goals/{id}/$label response shape.',
-      );
+  Future<String> _goalCurrency(int goalId) async {
+    final row = await _supabase
+        .from('saving_goals')
+        .select('currency')
+        .eq('id', goalId)
+        .single();
+    return (row['currency'] ?? 'SAR').toString();
+  }
+
+  Future<SavingGoalModel> _withPace(Map<String, dynamic> row) async {
+    final status = (row['status'] ?? 'active').toString();
+    final target = _toDouble(row['target_amount']);
+    final current = _toDouble(row['current_amount']);
+    final startStr = (row['start_date'] ?? '').toString();
+    final deadlineStr = (row['deadline'] ?? '').toString();
+
+    Map<String, dynamic> pace;
+    if (status != 'active') {
+      pace = {'status': 'inactive', 'monthly_target': 0, 'expected_at_today': 0, 'delta': 0};
+    } else {
+      final start = DateTime.tryParse(startStr);
+      final deadline = DateTime.tryParse(deadlineStr);
+      if (start == null || deadline == null || !deadline.isAfter(start)) {
+        pace = {'status': 'unscheduled', 'monthly_target': 0, 'expected_at_today': 0, 'delta': 0};
+      } else {
+        final totalMonths = _monthsBetween(start, deadline).clamp(1, 1000);
+        final monthlyTarget = target / totalMonths;
+        final now = DateTime.now();
+        final elapsedMonths = _monthsBetween(start, now).clamp(0, totalMonths);
+        final expectedAtToday = monthlyTarget * elapsedMonths;
+        final delta = current - expectedAtToday;
+        String s;
+        if (delta > 0.01) {
+          s = 'ahead';
+        } else if (delta < -0.01) {
+          s = 'off_track';
+        } else {
+          s = 'on_track';
+        }
+        pace = {
+          'status': s,
+          'monthly_target': monthlyTarget,
+          'expected_at_today': expectedAtToday,
+          'delta': delta,
+        };
+      }
     }
-    final inner = body['data'];
-    if (inner is Map<String, dynamic>) return inner;
-    return body;
+
+    final remaining = (target - current).clamp(0.0, double.infinity);
+    final progressPct = target > 0 ? (current / target * 100).clamp(0, 100) : 0.0;
+
+    return SavingGoalModel.fromJson({
+      ...row,
+      'remaining': remaining,
+      'progress_percentage': progressPct,
+      'pace': pace,
+    });
   }
 
-  Options _noCache() => Options(
-        headers: const {
-          'Cache-Control': 'no-cache',
-          'Pragma': 'no-cache',
-        },
-      );
-
-  AppException _unwrap(DioException e) {
-    final inner = e.error;
-    if (inner is AppException) return inner;
-    return mapDioException(e);
-  }
-
-  List<Map<String, dynamic>> _castList(List raw) {
-    return raw
-        .map((e) {
-          if (e is Map<String, dynamic>) return e;
-          if (e is Map) return e.cast<String, dynamic>();
-          return const <String, dynamic>{};
-        })
-        .where((e) => e.isNotEmpty)
-        .toList();
-  }
+  int _monthsBetween(DateTime a, DateTime b) => (b.year - a.year) * 12 + (b.month - a.month);
 }
 
-int _toInt(Object? v, {int fallback = 0}) {
-  if (v == null) return fallback;
-  if (v is int) return v;
-  if (v is num) return v.toInt();
-  return int.tryParse(v.toString()) ?? fallback;
+String _ymd(DateTime d) {
+  final y = d.year.toString().padLeft(4, '0');
+  final m = d.month.toString().padLeft(2, '0');
+  final day = d.day.toString().padLeft(2, '0');
+  return '$y-$m-$day';
+}
+
+double _toDouble(Object? v) {
+  if (v == null) return 0;
+  if (v is double) return v;
+  if (v is num) return v.toDouble();
+  return double.tryParse(v.toString()) ?? 0;
 }
 
 final savingGoalsRemoteDataSourceProvider =
     Provider<SavingGoalsRemoteDataSource>((ref) {
-  return SavingGoalsRemoteDataSourceImpl(ref.watch(dioProvider));
+  return SavingGoalsRemoteDataSourceImpl(ref.watch(supabaseClientProvider));
 });

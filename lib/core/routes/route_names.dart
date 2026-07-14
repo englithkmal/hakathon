@@ -12,10 +12,8 @@ class RouteNames {
 
   // Auth
   static const String login = 'login';
-  static const String otp = 'otp';
   static const String register = 'register';
   static const String loginPath = '/login';
-  static const String otpPath = '/login/otp';
   static const String registerPath = '/login/register';
 
   // Shell tabs

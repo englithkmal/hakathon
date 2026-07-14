@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import 'package:intl_phone_field_v2/phone_number.dart';
 
 import '../../../../core/constants/app_constants.dart';
 import '../../../../core/constants/app_sizes.dart';
@@ -13,10 +15,12 @@ import '../../../../core/widgets/custom_button.dart';
 import '../../../../core/widgets/custom_text_field.dart';
 import '../providers/auth_provider.dart';
 import '../widgets/auth_header.dart';
+import '../widgets/password_field.dart';
+import '../widgets/phone_input_field.dart';
 
-/// Profile-completion screen for users who passed `verify-otp` with
-/// `is_new_user: true`. Submits to `POST /auth/register` via the
-/// auth notifier, which already holds the verified `phone` + `code`.
+/// Account-creation screen: phone + password + profile info.
+/// Replaces the old OTP-gated registration flow — anyone can land here
+/// directly from [LoginScreen] via "Create account".
 class RegisterScreen extends ConsumerStatefulWidget {
   const RegisterScreen({super.key});
 
@@ -28,9 +32,17 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
   final _nameController = TextEditingController();
   final _emailController = TextEditingController();
   final _incomeController = TextEditingController();
+  final _passwordController = TextEditingController();
+  final _confirmPasswordController = TextEditingController();
 
+  PhoneNumber? _phone;
+  bool _isPhoneValid = false;
+
+  String? _phoneError;
   String? _nameError;
   String? _emailError;
+  String? _passwordError;
+  String? _confirmPasswordError;
 
   late String _currency;
   late String _language;
@@ -50,18 +62,45 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
     _nameController.dispose();
     _emailController.dispose();
     _incomeController.dispose();
+    _passwordController.dispose();
+    _confirmPasswordController.dispose();
     super.dispose();
   }
 
   bool get _canSubmit =>
-      !_submitting && _nameController.text.trim().isNotEmpty;
+      !_submitting && _nameController.text.trim().isNotEmpty && _isPhoneValid;
+
+  void _onPhoneChanged(PhoneNumber phone) {
+    bool valid = false;
+    try {
+      valid = phone.isValidNumber();
+    } catch (_) {
+      valid = false;
+    }
+    setState(() {
+      _phone = phone;
+      _isPhoneValid = valid;
+      if (_phoneError != null) _phoneError = null;
+    });
+  }
 
   Future<void> _submit() async {
+    final phone = _phone;
     final name = _nameController.text.trim();
     final email = _emailController.text.trim();
     final incomeRaw = _incomeController.text.trim().replaceAll(',', '');
+    final password = _passwordController.text;
+    final confirmPassword = _confirmPasswordController.text;
 
     var hasError = false;
+
+    if (phone == null || !_isPhoneValid) {
+      _phoneError = context.tr(AppStrings.authPhoneInvalid);
+      hasError = true;
+    } else {
+      _phoneError = null;
+    }
+
     if (name.isEmpty) {
       _nameError = context.tr(AppStrings.authRegisterNameRequired);
       hasError = true;
@@ -76,6 +115,20 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
       _emailError = null;
     }
 
+    if (password.length < 6) {
+      _passwordError = context.tr(AppStrings.authPasswordTooShort);
+      hasError = true;
+    } else {
+      _passwordError = null;
+    }
+
+    if (confirmPassword != password) {
+      _confirmPasswordError = context.tr(AppStrings.authPasswordsDontMatch);
+      hasError = true;
+    } else {
+      _confirmPasswordError = null;
+    }
+
     if (hasError) {
       setState(() {});
       return;
@@ -88,7 +141,11 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
       _generalError = null;
     });
 
+    final e164 = phone!.completeNumber;
+
     final failure = await ref.read(authProvider.notifier).register(
+          phoneE164: e164,
+          password: password,
           name: name,
           currency: _currency,
           language: _language,
@@ -110,8 +167,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final state = ref.watch(authProvider);
-    final phone = state is AuthRegistrationRequired ? state.displayPhone : '';
+    final invalidMsg = context.tr(AppStrings.authPhoneInvalid);
 
     return Scaffold(
       backgroundColor: scheme.surface,
@@ -136,10 +192,16 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                       compact: true,
                     ),
                     const SizedBox(height: AppSpacing.xl),
-                    if (phone.isNotEmpty) ...[
-                      _PhonePill(phone: phone),
-                      const SizedBox(height: AppSpacing.lg),
-                    ],
+                    PhoneInputField(
+                      label: context.tr(AppStrings.authPhoneLabel),
+                      hint: context.tr(AppStrings.authPhoneHint),
+                      errorText: _phoneError,
+                      enabled: !_submitting,
+                      autofocus: false,
+                      invalidNumberMessage: invalidMsg,
+                      onChanged: _onPhoneChanged,
+                    ),
+                    const SizedBox(height: AppSpacing.md),
                     CustomTextField(
                       controller: _nameController,
                       label: context.tr(AppStrings.authRegisterName),
@@ -154,6 +216,24 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                           setState(() {});
                         }
                       },
+                    ),
+                    const SizedBox(height: AppSpacing.md),
+                    PasswordField(
+                      controller: _passwordController,
+                      label: context.tr(AppStrings.authPasswordLabel),
+                      hint: context.tr(AppStrings.authPasswordHint),
+                      errorText: _passwordError,
+                      enabled: !_submitting,
+                      textInputAction: TextInputAction.next,
+                    ),
+                    const SizedBox(height: AppSpacing.md),
+                    PasswordField(
+                      controller: _confirmPasswordController,
+                      label: context.tr(AppStrings.authConfirmPasswordLabel),
+                      hint: context.tr(AppStrings.authPasswordHint),
+                      errorText: _confirmPasswordError,
+                      enabled: !_submitting,
+                      textInputAction: TextInputAction.next,
                     ),
                     const SizedBox(height: AppSpacing.md),
                     CustomTextField(
@@ -207,6 +287,8 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                         style: AppTextStyles.labelMd(color: scheme.error),
                       ),
                     ],
+                    const SizedBox(height: AppSpacing.lg),
+                    _LoginLink(submitting: _submitting),
                   ],
                 ),
               ),
@@ -231,43 +313,38 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
   }
 }
 
-class _PhonePill extends StatelessWidget {
-  const _PhonePill({required this.phone});
+class _LoginLink extends StatelessWidget {
+  const _LoginLink({required this.submitting});
 
-  final String phone;
+  final bool submitting;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.md,
-        vertical: AppSpacing.sm + 2,
-      ),
-      decoration: BoxDecoration(
-        color: scheme.primaryContainer.withValues(alpha: 0.32),
-        borderRadius: AppRadius.brMd,
-        border: Border.all(color: scheme.primary.withValues(alpha: 0.18)),
-      ),
-      child: Row(
-        children: [
-          Icon(
-            Icons.verified_rounded,
-            size: AppIconSize.lg,
-            color: scheme.primary,
-          ),
-          const SizedBox(width: AppSpacing.sm),
-          Expanded(
-            child: Text(
-              phone,
-              style: AppTextStyles.headlineSm(
-                color: scheme.onPrimaryContainer,
+    final base = AppTextStyles.bodySm(color: scheme.onSurfaceVariant);
+    final link = AppTextStyles.bodySm(color: scheme.primary).copyWith(
+      fontWeight: FontWeight.w600,
+      decoration: TextDecoration.underline,
+      decorationColor: scheme.primary.withValues(alpha: 0.3),
+      decorationThickness: 1.2,
+    );
+
+    return Center(
+      child: GestureDetector(
+        onTap: submitting ? null : () => context.pop(),
+        child: Text.rich(
+          TextSpan(
+            children: [
+              TextSpan(text: context.tr(AppStrings.authHaveAccountAlready)),
+              TextSpan(
+                text: context.tr(AppStrings.authGoToLoginLink),
+                style: link,
               ),
-              textDirection: TextDirection.ltr,
-              textAlign: TextAlign.start,
-            ),
+            ],
           ),
-        ],
+          style: base,
+          textAlign: TextAlign.center,
+        ),
       ),
     );
   }

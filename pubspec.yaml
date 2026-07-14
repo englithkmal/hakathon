@@ -20,7 +20,8 @@ dependencies:
 
   go_router: ^14.2.0
 
-  dio: ^5.4.3+1
+  # Supabase — replaces Dio + Laravel backend
+  supabase_flutter: ^2.5.6
 
   shared_preferences: ^2.2.3
   flutter_secure_storage: ^9.2.2

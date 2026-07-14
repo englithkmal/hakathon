@@ -1,93 +1,87 @@
-import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../../core/errors/exceptions.dart';
-import '../../../../core/network/api_endpoints.dart';
-import '../../../../core/network/dio_provider.dart';
-import '../../../../core/network/error_interceptor.dart';
+import '../../../../core/supabase/supabase_provider.dart';
 import '../models/register_device_body.dart';
 import '../models/register_guest_device_body.dart';
 
-/// Speaks to the Waffer `/devices/*` endpoints.
-///
-/// Throws [AppException]s — never raw [DioException]s — so callers can
-/// remain transport-agnostic.
 abstract class DeviceRemoteDataSource {
-  /// `POST /devices/register-guest` — registers an FCM token for an
-  /// unauthenticated device. The backend later auto-links the token to a
-  /// user account once [registerDevice] is called with the same token.
   Future<void> registerGuest(RegisterGuestDeviceBody body);
-
-  /// `POST /devices/register` 🔒 — links the current device's FCM token to
-  /// the authenticated user account (Bearer token on the request identifies
-  /// the user). Required for the backend to deliver per-user notifications
-  /// like alerts, tips, transaction reminders, etc. Without this call only
-  /// guest broadcasts and OTP pushes (which carry the token in the request
-  /// body) reach the device.
   Future<void> registerDevice(RegisterDeviceBody body);
-
-  /// `POST /devices/unregister` 🔒 — removes a single FCM token from the
-  /// backend so this device stops receiving pushes for the user that's
-  /// logging out. Other devices belonging to the same user are unaffected.
   Future<void> unregisterDevice(UnregisterDeviceBody body);
 }
 
+/// يتوقع جدول `devices` بالأعمدة:
+/// id, user_id (nullable), token (unique), platform, device_name,
+/// device_model, app_version, locale, created_at, updated_at
 class DeviceRemoteDataSourceImpl implements DeviceRemoteDataSource {
-  DeviceRemoteDataSourceImpl(this._dio);
+  DeviceRemoteDataSourceImpl(this._supabase);
 
-  final Dio _dio;
+  final SupabaseClient _supabase;
 
   @override
   Future<void> registerGuest(RegisterGuestDeviceBody body) async {
     try {
-      await _dio.post(
-        ApiEndpoints.devicesRegisterGuest,
-        data: body.toJson(),
-        // No auth header is needed — this endpoint is meant to be hit before
-        // the user has logged in.
-        options: Options(extra: {'skipAuth': true}),
+      await _supabase.from('devices').upsert(
+        {
+          'token': body.token,
+          'platform': body.platform,
+          'device_name': body.deviceName,
+          'device_model': body.deviceModel,
+          'app_version': body.appVersion,
+          'locale': body.locale,
+          'updated_at': DateTime.now().toIso8601String(),
+        },
+        onConflict: 'token',
       );
-    } on DioException catch (e) {
-      throw _unwrap(e);
+    } on PostgrestException catch (e) {
+      throw ServerException(message: e.message);
+    } catch (e) {
+      throw UnknownException(message: e.toString());
     }
   }
 
   @override
   Future<void> registerDevice(RegisterDeviceBody body) async {
     try {
-      // The Dio AuthInterceptor attaches the Bearer token automatically.
-      // We deliberately don't set `skipAuth` so 401 responses bubble up and
-      // the caller can retry after a re-login.
-      await _dio.post(
-        ApiEndpoints.devicesRegister,
-        data: body.toJson(),
+      final userId = _supabase.auth.currentUser?.id;
+      if (userId == null) {
+        throw const UnauthorizedException(message: 'غير مسجل الدخول', statusCode: 401);
+      }
+      await _supabase.from('devices').upsert(
+        {
+          'user_id': userId,
+          'token': body.token,
+          'platform': body.platform,
+          'device_name': body.deviceName,
+          'device_model': body.deviceModel,
+          'app_version': body.appVersion,
+          'locale': body.locale,
+          'updated_at': DateTime.now().toIso8601String(),
+        },
+        onConflict: 'token',
       );
-    } on DioException catch (e) {
-      throw _unwrap(e);
+    } on PostgrestException catch (e) {
+      throw ServerException(message: e.message);
+    } catch (e) {
+      if (e is AppException) rethrow;
+      throw UnknownException(message: e.toString());
     }
   }
 
   @override
   Future<void> unregisterDevice(UnregisterDeviceBody body) async {
     try {
-      await _dio.post(
-        ApiEndpoints.devicesUnregister,
-        data: body.toJson(),
-      );
-    } on DioException catch (e) {
-      throw _unwrap(e);
+      await _supabase.from('devices').update({'user_id': null}).eq('token', body.token);
+    } on PostgrestException catch (e) {
+      throw ServerException(message: e.message);
+    } catch (e) {
+      throw UnknownException(message: e.toString());
     }
-  }
-
-  /// `ErrorInterceptor` puts an [AppException] in `DioException.error`. If
-  /// for some reason that didn't happen, fall back to mapping it here.
-  AppException _unwrap(DioException e) {
-    final inner = e.error;
-    if (inner is AppException) return inner;
-    return mapDioException(e);
   }
 }
 
 final deviceRemoteDataSourceProvider = Provider<DeviceRemoteDataSource>((ref) {
-  return DeviceRemoteDataSourceImpl(ref.watch(dioProvider));
+  return DeviceRemoteDataSourceImpl(ref.watch(supabaseClientProvider));
 });

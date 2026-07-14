@@ -1,15 +1,11 @@
-import 'dart:io' show Platform;
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../../core/devices/device_metadata_resolver.dart';
 import '../../../../core/errors/exceptions.dart';
 import '../../../../core/errors/failures.dart';
 import '../../../devices/application/authenticated_device_service.dart';
 import '../../../home/presentation/providers/dashboard_provider.dart';
 import '../../data/models/user_model.dart';
-import '../../data/models/verify_otp_result.dart';
 import '../../data/repositories/auth_repository.dart';
 
 /// Sealed hierarchy describing the user's authentication state.
@@ -18,57 +14,13 @@ sealed class AuthState {
 }
 
 /// Transient bootstrap state — the notifier is reading the persisted session
-/// from secure storage. The router shows the splash while we're here so the
-/// user never sees a brief flash of `/login` before being sent to `/home`.
+/// from secure storage. The router shows the splash while we're here.
 class AuthInitializing extends AuthState {
   const AuthInitializing();
 }
 
 class AuthUnauthenticated extends AuthState {
   const AuthUnauthenticated();
-}
-
-class AuthAwaitingOtp extends AuthState {
-  const AuthAwaitingOtp({
-    required this.phoneE164,
-    required this.displayPhone,
-    required this.expiresIn,
-    required this.cooldownSeconds,
-    this.delivery,
-    this.hint,
-  });
-
-  /// E.164 formatted phone (e.g. `+9665XXXXXXXX`).
-  final String phoneE164;
-
-  /// Pretty form intended for the UI (e.g. `+966 5X XXX XXXX`).
-  final String displayPhone;
-
-  /// Seconds until the issued OTP expires server-side.
-  final int expiresIn;
-
-  /// Seconds the user must wait before another `send-otp` is allowed.
-  final int cooldownSeconds;
-
-  /// `push` | `sms` | etc.
-  final String? delivery;
-
-  /// Localised hint from the backend (e.g. "تم إرساله كإشعار...").
-  final String? hint;
-}
-
-/// The OTP was verified for a phone we've never seen — the UI must collect
-/// profile info and call [AuthNotifier.register] to finish onboarding.
-class AuthRegistrationRequired extends AuthState {
-  const AuthRegistrationRequired({
-    required this.phoneE164,
-    required this.displayPhone,
-    required this.code,
-  });
-
-  final String phoneE164;
-  final String displayPhone;
-  final String code;
 }
 
 class AuthAuthenticated extends AuthState {
@@ -97,9 +49,7 @@ class AuthNotifier extends Notifier<AuthState> {
   }
 
   /// Reads any persisted session from storage. Always resolves the state to
-  /// either [AuthAuthenticated] (valid token) or [AuthUnauthenticated] (no
-  /// token / expired) — the router relies on us *eventually* leaving the
-  /// initializing state so the splash can dismiss.
+  /// either [AuthAuthenticated] (valid token) or [AuthUnauthenticated].
   Future<void> _restore() async {
     try {
       final session = await _repo.loadSession();
@@ -125,137 +75,56 @@ class AuthNotifier extends Notifier<AuthState> {
     }
   }
 
-  /// Sends an OTP and transitions into [AuthAwaitingOtp].
-  ///
-  /// Returns `null` on success, or a [Failure] describing the issue so the
-  /// UI can show a localised error.
-  Future<Failure?> requestOtp({
+  /// تسجيل الدخول برقم الجوال + كلمة المرور.
+  /// يُرجع `null` عند النجاح، أو [Failure] للعرض في الواجهة.
+  Future<Failure?> login({
     required String phoneE164,
-    required String displayPhone,
-    String? deviceToken,
-    String? locale,
+    required String password,
   }) async {
     try {
-      final info = await _repo.sendOtp(
+      final session = await _repo.login(
         phoneE164: phoneE164,
-        deviceToken: deviceToken,
-        platform: _currentPlatform(),
-        locale: locale,
+        password: password,
       );
-      state = AuthAwaitingOtp(
-        phoneE164: phoneE164,
-        displayPhone: displayPhone,
-        expiresIn: info.expiresIn,
-        cooldownSeconds: info.cooldownSeconds,
-        delivery: info.delivery,
-        hint: info.hint,
+      state = AuthAuthenticated(
+        phoneE164: session.user?.phoneE164 ?? phoneE164,
+        accessToken: session.accessToken,
+        user: session.user,
       );
+      // ربط جهاز الإشعارات بالحساب الجديد (best-effort).
+      _registerDeviceSafely();
       return null;
     } on AppException catch (e) {
       return e.toFailure();
     }
   }
 
-  /// Verifies the OTP. On success transitions to [AuthAuthenticated] for
-  /// existing users, or [AuthRegistrationRequired] for new users.
-  /// Returns `null` on success, otherwise a [Failure].
-  Future<Failure?> verifyOtp(String code) async {
-    final current = state;
-    if (current is! AuthAwaitingOtp) {
-      return const UnknownFailure(message: 'No pending OTP request');
-    }
-
-    try {
-      // Gather device meta (FCM token + platform + locale + device info)
-      // so the backend can link this device to the freshly-authenticated
-      // user account on the same request. Without this, only OTP pushes
-      // and guest broadcasts reach the device — every per-user push stays
-      // silent until the next manual `/devices/register` call.
-      final device = await _resolveDeviceMetadata();
-      final result = await _repo.verifyOtp(
-        phoneE164: current.phoneE164,
-        code: code,
-        device: device,
-      );
-      switch (result) {
-        case VerifyOtpAuthenticated(:final session):
-          state = AuthAuthenticated(
-            phoneE164: session.user?.phoneE164 ?? current.phoneE164,
-            accessToken: session.accessToken,
-            user: session.user,
-          );
-        case VerifyOtpNeedsRegistration(:final phoneE164, :final code):
-          state = AuthRegistrationRequired(
-            phoneE164: phoneE164,
-            displayPhone: current.displayPhone,
-            code: code,
-          );
-      }
-      return null;
-    } on AppException catch (e) {
-      return e.toFailure();
-    }
-  }
-
-  /// Re-issues the OTP — same backend call as [requestOtp] (Waffer doesn't
-  /// expose a separate `resend` endpoint, the cooldown is enforced server-side).
-  Future<Failure?> resendOtp() async {
-    final current = state;
-    if (current is! AuthAwaitingOtp) {
-      return const UnknownFailure(message: 'No pending OTP request');
-    }
-    try {
-      final info = await _repo.sendOtp(
-        phoneE164: current.phoneE164,
-        platform: _currentPlatform(),
-      );
-      state = AuthAwaitingOtp(
-        phoneE164: current.phoneE164,
-        displayPhone: current.displayPhone,
-        expiresIn: info.expiresIn,
-        cooldownSeconds: info.cooldownSeconds,
-        delivery: info.delivery,
-        hint: info.hint,
-      );
-      return null;
-    } on AppException catch (e) {
-      return e.toFailure();
-    }
-  }
-
-  /// Completes registration for a new user. The notifier holds the verified
-  /// `phone` + `code` pair — the UI only collects profile info and calls this.
+  /// إنشاء حساب جديد ثم تسجيل الدخول مباشرة.
   Future<Failure?> register({
+    required String phoneE164,
+    required String password,
     required String name,
     required String currency,
     required String language,
     String? email,
     num? monthlyIncome,
   }) async {
-    final current = state;
-    if (current is! AuthRegistrationRequired) {
-      return const UnknownFailure(message: 'No pending registration');
-    }
     try {
-      // Same rationale as `verifyOtp`: forward device meta so the new
-      // account is linked to this device's FCM token from the very first
-      // authenticated request.
-      final device = await _resolveDeviceMetadata();
       final session = await _repo.register(
-        phoneE164: current.phoneE164,
-        code: current.code,
+        phoneE164: phoneE164,
+        password: password,
         name: name,
         currency: currency,
         language: language,
         email: email,
         monthlyIncome: monthlyIncome,
-        device: device,
       );
       state = AuthAuthenticated(
-        phoneE164: session.user?.phoneE164 ?? current.phoneE164,
+        phoneE164: session.user?.phoneE164 ?? phoneE164,
         accessToken: session.accessToken,
         user: session.user,
       );
+      _registerDeviceSafely();
       return null;
     } on AppException catch (e) {
       return e.toFailure();
@@ -264,8 +133,6 @@ class AuthNotifier extends Notifier<AuthState> {
 
   /// Patches the authenticated user's profile and updates the
   /// in-memory [AuthAuthenticated] state with the new [UserModel].
-  /// Returns `null` on success, otherwise a [Failure] for the UI to
-  /// display.
   Future<Failure?> updateProfile({
     String? name,
     String? email,
@@ -285,9 +152,6 @@ class AuthNotifier extends Notifier<AuthState> {
         currency: currency,
         language: language,
       );
-      // Re-issue the authenticated state with the new user record so
-      // every screen watching `authProvider` (e.g. the currency
-      // provider fallback, the home greeting) reacts immediately.
       state = AuthAuthenticated(
         phoneE164: updated.phoneE164.isNotEmpty
             ? updated.phoneE164
@@ -295,10 +159,6 @@ class AuthNotifier extends Notifier<AuthState> {
         accessToken: current.accessToken,
         user: updated,
       );
-      // The dashboard endpoint echoes the user's currency back as
-      // `dashboard.currency`; invalidate it so the next read refetches
-      // with the server-authoritative value rather than serving the
-      // pre-update cache.
       ref.invalidate(dashboardProvider);
       return null;
     } on AppException catch (e) {
@@ -306,15 +166,7 @@ class AuthNotifier extends Notifier<AuthState> {
     }
   }
 
-  /// Goes back to phone entry, dropping any pending OTP / registration.
-  void editPhone() {
-    state = const AuthUnauthenticated();
-  }
-
   Future<void> logout() async {
-    // Unregister the device while we still have a valid Bearer token —
-    // otherwise the backend will keep pushing user-targeted notifications to
-    // an FCM token nobody owns. Best-effort: never blocks logout.
     try {
       await ref.read(authenticatedDeviceServiceProvider).onLoggedOut();
     } catch (e, st) {
@@ -329,23 +181,19 @@ class AuthNotifier extends Notifier<AuthState> {
     }
   }
 
-  static String _currentPlatform() {
-    if (kIsWeb) return 'web';
-    if (Platform.isAndroid) return 'android';
-    if (Platform.isIOS) return 'ios';
-    return 'web';
-  }
-
-  /// Best-effort device metadata for `verify-otp` / `register`. Falls back
-  /// to a minimal payload (just `platform`) if the resolver throws — we
-  /// never want a flaky `device_info_plus` / FCM call to block login.
-  Future<DeviceMetadata?> _resolveDeviceMetadata() async {
-    try {
-      return await ref.read(deviceMetadataResolverProvider).resolve();
-    } catch (e, st) {
-      debugPrint('AuthNotifier: device metadata resolve failed: $e\n$st');
-      return DeviceMetadata(platform: _currentPlatform());
-    }
+  /// Best-effort: ربط رمز FCM بالحساب الجديد بعد تسجيل الدخول/التسجيل.
+  void _registerDeviceSafely() {
+    final current = state;
+    if (current is! AuthAuthenticated) return;
+    final userId = current.user?.id ?? '';
+    if (userId.isEmpty) return;
+    Future(() async {
+      try {
+        await ref.read(authenticatedDeviceServiceProvider).onAuthenticated(userId);
+      } catch (e, st) {
+        debugPrint('AuthNotifier: device register failed: $e\n$st');
+      }
+    });
   }
 }
 

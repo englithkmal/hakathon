@@ -510,20 +510,18 @@ class AppStrings {
   static const String authTermsNotePrivacy = 'auth.termsNote.privacy';
   static const String authTermsNoteSuffix = 'auth.termsNote.suffix';
 
-  // Auth — OTP
-  static const String authOtpAppBarTitle = 'auth.otp.appBarTitle';
-  static const String authOtpHeading = 'auth.otp.heading';
-  static const String authOtpTitle = 'auth.otp.title';
-  static const String authOtpSubtitle = 'auth.otp.subtitle';
-  static const String authOtpEditPhone = 'auth.otp.editPhone';
-  static const String authOtpVerify = 'auth.otp.verify';
-  static const String authOtpInvalid = 'auth.otp.invalid';
-  static const String authOtpResend = 'auth.otp.resend';
-  static const String authOtpResendIn = 'auth.otp.resendIn';
-  static const String authOtpResent = 'auth.otp.resent';
-  static const String authOtpDevHint = 'auth.otp.devHint';
-  static const String authOtpPushHint = 'auth.otp.pushHint';
-  static const String authOtpExpired = 'auth.otp.expired';
+  // Auth — Password
+  static const String authPasswordLabel = 'auth.password.label';
+  static const String authPasswordHint = 'auth.password.hint';
+  static const String authPasswordTooShort = 'auth.password.tooShort';
+  static const String authLoginSubmit = 'auth.login.submit';
+  static const String authLoginInvalid = 'auth.login.invalid';
+  static const String authNoAccountYet = 'auth.login.noAccountYet';
+  static const String authCreateAccountLink = 'auth.login.createAccountLink';
+  static const String authHaveAccountAlready = 'auth.register.haveAccountAlready';
+  static const String authGoToLoginLink = 'auth.register.goToLoginLink';
+  static const String authConfirmPasswordLabel = 'auth.register.confirmPassword';
+  static const String authPasswordsDontMatch = 'auth.register.passwordsDontMatch';
 
   // Auth — Register (new user)
   static const String authRegisterTitle = 'auth.register.title';

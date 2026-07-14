@@ -22,36 +22,16 @@ class AppConstants {
 
   static const double tapScaleDown = 0.98;
 
-  // ───────────────────────────── Networking ─────────────────────────────
-  // Single source of truth for the backend host. Just edit this string
-  // when you switch networks (office Wi-Fi → home → hotspot, etc.).
-  //
-  // Quick reference for picking the right value:
-  //   • Real Android/iOS device on same Wi-Fi → host's LAN IPv4,
-  //     e.g. http://192.168.8.105:8000  (run `ipconfig` to find it)
-  //   • Android emulator                   → http://10.0.2.2:8000
-  //   • iOS simulator / Web / adb reverse  → http://127.0.0.1:8000
-  //
-  // After editing, do a full `flutter run` (or hot restart with `R`) —
-  // hot reload alone won't pick up `const` changes.
-  static const String apiBaseUrl = 'http://192.168.8.105:8000';
+  // ───────────────────────────── Supabase ─────────────────────────────
+  // ضع هنا بيانات مشروعك في Supabase:
+  //   1. اذهب إلى supabase.com → مشروعك → Settings → API
+  //   2. انسخ Project URL و anon key
+  static const String supabaseUrl = 'https://YOUR_PROJECT.supabase.co';
+  static const String supabaseAnonKey = 'YOUR_ANON_KEY';
 
-  /// Path segment appended to [apiBaseUrl]. Final base = `apiBaseUrl/apiVersion`.
-  static const String apiVersion = 'api/v1';
-
-  static const Duration apiConnectTimeout = Duration(seconds: 20);
-  static const Duration apiReceiveTimeout = Duration(seconds: 20);
-  static const Duration apiSendTimeout = Duration(seconds: 20);
-
-  /// While `true`, the auth flow uses an in-memory mock backend (OTP
-  /// `123456`). Flip to `false` once the real backend is reachable.
+  /// While `true`, the auth flow uses an in-memory mock backend.
   static const bool useMockBackend = false;
 
-  /// Seconds before a freshly-issued OTP expires. Used as a safety fallback
-  /// when the backend response doesn't carry `expires_in`.
   static const int otpExpirySecondsFallback = 120;
-
-  /// Seconds the user must wait before requesting a new OTP. Used as a
-  /// fallback when the backend doesn't send `cooldown_seconds`.
   static const int otpResendCooldownFallback = 60;
 }

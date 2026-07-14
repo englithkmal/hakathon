@@ -1,72 +1,30 @@
 import '../../../../core/constants/app_constants.dart';
-import '../../../../core/devices/device_metadata_resolver.dart';
 import '../../../../core/errors/exceptions.dart';
 import '../data_sources/auth_local_data_source.dart';
 import '../models/auth_session.dart';
-import '../models/otp_request_info.dart';
 import '../models/user_model.dart';
-import '../models/verify_otp_result.dart';
 import 'auth_repository.dart';
 
-/// In-memory implementation that mimics the Waffer backend so the UI can
-/// be exercised end-to-end without a server.
-///
-/// The accepted OTP is [mockOtp]. The mock distinguishes "new" vs. "existing"
-/// users by phone-number prefix: numbers ending in `9` (last digit) are
-/// treated as new users to drive the registration flow during QA.
+/// In-memory implementation for QA/design work without a backend.
 class MockAuthRepository implements AuthRepository {
   MockAuthRepository({required this.local});
 
-  static const String mockOtp = '123456';
-  static const Duration mockNetworkDelay = Duration(milliseconds: 600);
+  static const Duration mockNetworkDelay = Duration(milliseconds: 500);
 
   final AuthLocalDataSource local;
 
-  /// Phones that are treated as "new users" by the mock — the verify-otp
-  /// step returns `is_new_user: true` and routes the UI to the registration
-  /// screen. Anything else logs in directly.
-  bool _isNewUserPhone(String phoneE164) => phoneE164.endsWith('9');
-
   @override
-  Future<OtpRequestInfo> sendOtp({
+  Future<AuthSession> login({
     required String phoneE164,
-    String? deviceToken,
-    String? platform,
-    String? locale,
+    required String password,
   }) async {
     await Future.delayed(mockNetworkDelay);
-    return OtpRequestInfo(
-      isNewUser: _isNewUserPhone(phoneE164),
-      expiresIn: AppConstants.otpExpirySecondsFallback,
-      cooldownSeconds: AppConstants.otpResendCooldownFallback,
-      delivery: 'mock',
-      hint: 'استخدم الرمز 123456 للاختبار',
-    );
-  }
-
-  @override
-  Future<VerifyOtpResult> verifyOtp({
-    required String phoneE164,
-    required String code,
-    DeviceMetadata? device,
-  }) async {
-    // `device` is intentionally accepted but unused — the mock has no FCM /
-    // backend to register against, so we just satisfy the [AuthRepository]
-    // contract.
-    final _ = device;
-    await Future.delayed(mockNetworkDelay);
-
-    if (code != mockOtp) {
+    if (password.length < 6) {
       throw const UnauthorizedException(
-        message: 'الرمز غير صحيح',
-        code: 'INVALID_OTP',
+        message: 'رقم الجوال أو كلمة المرور غير صحيحة.',
+        statusCode: 401,
       );
     }
-
-    if (_isNewUserPhone(phoneE164)) {
-      return VerifyOtpNeedsRegistration(phoneE164: phoneE164, code: code);
-    }
-
     final session = AuthSession(
       accessToken: 'mock.access.${DateTime.now().millisecondsSinceEpoch}',
       user: UserModel(
@@ -78,32 +36,20 @@ class MockAuthRepository implements AuthRepository {
       ),
     );
     await local.saveSession(session);
-    return VerifyOtpAuthenticated(session);
+    return session;
   }
 
   @override
   Future<AuthSession> register({
     required String phoneE164,
-    required String code,
+    required String password,
     required String name,
     required String currency,
     required String language,
     String? email,
     num? monthlyIncome,
-    DeviceMetadata? device,
   }) async {
-    // See note in [verifyOtp]: `device` is part of the contract but the
-    // mock has no backend to forward it to.
-    final _ = device;
     await Future.delayed(mockNetworkDelay);
-
-    if (code != mockOtp) {
-      throw const UnauthorizedException(
-        message: 'الرمز غير صحيح',
-        code: 'INVALID_OTP',
-      );
-    }
-
     final session = AuthSession(
       accessToken: 'mock.access.${DateTime.now().millisecondsSinceEpoch}',
       user: UserModel(

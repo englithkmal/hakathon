@@ -4,7 +4,6 @@ import 'package:go_router/go_router.dart';
 
 import '../../features/auth/presentation/providers/auth_provider.dart';
 import '../../features/auth/presentation/screens/login_screen.dart';
-import '../../features/auth/presentation/screens/otp_verification_screen.dart';
 import '../../features/auth/presentation/screens/register_screen.dart';
 import '../../features/budget/presentation/screens/budget_add_category_screen.dart';
 import '../../features/budget/presentation/screens/budget_add_goal_screen.dart';
@@ -41,9 +40,8 @@ final goRouterProvider = Provider<GoRouter>((ref) {
       final onSplash = loc == RouteNames.splashPath;
       final onOnboarding = loc == RouteNames.onboardingPath;
       final onLogin = loc == RouteNames.loginPath;
-      final onOtp = loc == RouteNames.otpPath;
       final onRegister = loc == RouteNames.registerPath;
-      final onAuthRoute = onLogin || onOtp || onRegister;
+      final onAuthRoute = onLogin || onRegister;
 
       // While we're still hydrating the session from storage, hold on the
       // splash. This is what removes the "/login → /home" flicker on cold
@@ -64,16 +62,8 @@ final goRouterProvider = Provider<GoRouter>((ref) {
         return onOnboarding ? null : RouteNames.onboardingPath;
       }
 
-      if (auth is AuthRegistrationRequired) {
-        return onRegister ? null : RouteNames.registerPath;
-      }
-
-      if (auth is AuthAwaitingOtp) {
-        return onOtp ? null : RouteNames.otpPath;
-      }
-
-      // Unauthenticated and onboarding done → must be on /login.
-      return onLogin ? null : RouteNames.loginPath;
+      // Unauthenticated and onboarding done → /login or /login/register.
+      return onAuthRoute ? null : RouteNames.loginPath;
     },
     routes: [
       GoRoute(
@@ -92,11 +82,6 @@ final goRouterProvider = Provider<GoRouter>((ref) {
         name: RouteNames.login,
         pageBuilder: (context, state) => _fadePage(state, const LoginScreen()),
       ),
-      GoRoute(
-        path: RouteNames.otpPath,
-        name: RouteNames.otp,
-        pageBuilder: (context, state) =>
-            _fadePage(state, const OtpVerificationScreen()),
       ),
       GoRoute(
         path: RouteNames.registerPath,

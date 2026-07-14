@@ -1,29 +1,17 @@
-import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../../core/errors/exceptions.dart';
-import '../../../../core/network/api_endpoints.dart';
-import '../../../../core/network/dio_provider.dart';
-import '../../../../core/network/error_interceptor.dart';
-import '../models/auth_session.dart';
+import '../../../../core/supabase/supabase_provider.dart';
+import '../models/auth_session.dart' as app;
 import '../models/login_request.dart';
-import '../models/otp_request_info.dart';
 import '../models/register_request.dart';
 import '../models/user_model.dart';
-import '../models/verify_otp_result.dart';
 
-/// Speaks to the Waffer backend for everything auth-related.
-///
-/// Throws [AppException]s — never raw [DioException]s — so the repository
-/// layer doesn't need to know we're using Dio.
 abstract class AuthRemoteDataSource {
-  Future<OtpRequestInfo> sendOtp(RequestOtpBody body);
-  Future<VerifyOtpResult> verifyOtp(VerifyOtpBody body);
-  Future<AuthSession> register(RegisterBody body);
+  Future<app.AuthSession> login(LoginBody body);
+  Future<app.AuthSession> register(RegisterBody body);
   Future<UserModel> me();
-
-  /// `PUT /auth/profile`. Pass only the fields the user actually
-  /// changed — the backend treats `null`/missing keys as "leave it".
   Future<UserModel> updateProfile({
     String? name,
     String? email,
@@ -31,95 +19,152 @@ abstract class AuthRemoteDataSource {
     String? currency,
     String? language,
   });
-
   Future<void> logout();
-  Future<void> logoutAll();
+}
+
+/// يحوّل رقم الهاتف إلى "بريد" صناعي — Supabase Auth يتطلب email + password
+/// لتسجيل الدخول بكلمة مرور. الرقم يبقى محفوظاً في profiles.phone.
+String _syntheticEmail(String phoneE164) {
+  final digits = phoneE164.replaceAll(RegExp(r'[^0-9]'), '');
+  return '$digits@waffer.app';
 }
 
 class AuthRemoteDataSourceImpl implements AuthRemoteDataSource {
-  AuthRemoteDataSourceImpl(this._dio);
+  AuthRemoteDataSourceImpl(this._supabase);
 
-  final Dio _dio;
+  final SupabaseClient _supabase;
 
   @override
-  Future<OtpRequestInfo> sendOtp(RequestOtpBody body) async {
+  Future<app.AuthSession> login(LoginBody body) async {
     try {
-      final response = await _dio.post(
-        ApiEndpoints.sendOtp,
-        data: body.toJson(),
-        options: Options(extra: {'skipAuth': true}),
+      final res = await _supabase.auth.signInWithPassword(
+        email: _syntheticEmail(body.phoneE164),
+        password: body.password,
       );
-      final data = _unwrapData(response.data, endpoint: 'send-otp');
-      return OtpRequestInfo.fromJson(data);
-    } on DioException catch (e) {
-      throw _unwrap(e);
+
+      final supaUser = res.user;
+      final session = res.session;
+      if (supaUser == null || session == null) {
+        throw const ServerException(message: 'فشل تسجيل الدخول.');
+      }
+
+      final profile = await _supabase
+          .from('profiles')
+          .select()
+          .eq('id', supaUser.id)
+          .maybeSingle();
+
+      final user = UserModel.fromJson({
+        'id': supaUser.id,
+        'phone': body.phoneE164,
+        ...profile ?? {},
+      });
+
+      return app.AuthSession(
+        accessToken: session.accessToken,
+        refreshToken: session.refreshToken,
+        user: user,
+      );
+    } on AuthException catch (e) {
+      throw _mapAuth(e);
+    } catch (e) {
+      if (e is AppException) rethrow;
+      throw UnknownException(message: e.toString());
     }
   }
 
   @override
-  Future<VerifyOtpResult> verifyOtp(VerifyOtpBody body) async {
+  Future<app.AuthSession> register(RegisterBody body) async {
     try {
-      final response = await _dio.post(
-        ApiEndpoints.verifyOtp,
-        data: body.toJson(),
-        options: Options(extra: {'skipAuth': true}),
+      final email = _syntheticEmail(body.phoneE164);
+      final res = await _supabase.auth.signUp(
+        email: email,
+        password: body.password,
+        data: {'phone': body.phoneE164},
       );
-      final data = _unwrapData(response.data, endpoint: 'verify-otp');
-      // New-user branch → backend returns `{ verified: true, is_new_user: true }`.
-      final isNewUser = data['is_new_user'] == true;
-      if (isNewUser) {
-        return VerifyOtpNeedsRegistration(
-          phoneE164: body.phoneE164,
-          code: body.code,
-        );
-      }
-      // Existing-user branch → `{ user, token, is_new_user: false }`.
-      final session = AuthSession.fromJson(data);
-      if (session.accessToken.isEmpty) {
-        throw const ServerException(
-          message: 'verify-otp succeeded but returned no token.',
-        );
-      }
-      return VerifyOtpAuthenticated(session);
-    } on DioException catch (e) {
-      throw _unwrap(e);
-    }
-  }
 
-  @override
-  Future<AuthSession> register(RegisterBody body) async {
-    try {
-      final response = await _dio.post(
-        ApiEndpoints.register,
-        data: body.toJson(),
-        options: Options(extra: {'skipAuth': true}),
-      );
-      final data = _unwrapData(response.data, endpoint: 'register');
-      final session = AuthSession.fromJson(data);
-      if (session.accessToken.isEmpty) {
+      var supaUser = res.user;
+      var session = res.session;
+
+      // بعض إعدادات Supabase تتطلب تأكيد البريد، وهنا لا نملك بريداً
+      // حقيقياً — إذا لم تُرجع جلسة مباشرة، نحاول تسجيل الدخول فوراً.
+      if (session == null) {
+        final loginRes = await _supabase.auth.signInWithPassword(
+          email: email,
+          password: body.password,
+        );
+        supaUser = loginRes.user;
+        session = loginRes.session;
+      }
+
+      if (supaUser == null || session == null) {
         throw const ServerException(
-          message: 'register succeeded but returned no token.',
+          message:
+              'تم إنشاء الحساب لكن يتطلب تأكيد البريد. عطّل "Confirm email" من إعدادات Supabase Auth.',
         );
       }
-      return session;
-    } on DioException catch (e) {
-      throw _unwrap(e);
+
+      // حفظ بيانات الملف الشخصي
+      await _supabase.from('profiles').upsert({
+        'id': supaUser.id,
+        'phone': body.phoneE164,
+        'name': body.name,
+        if (body.email != null) 'email': body.email,
+        if (body.monthlyIncome != null) 'monthly_income': body.monthlyIncome,
+        'currency': body.currency,
+        'language': body.language,
+        'updated_at': DateTime.now().toIso8601String(),
+      });
+
+      final user = UserModel(
+        id: supaUser.id,
+        phoneE164: body.phoneE164,
+        name: body.name,
+        email: body.email,
+        currency: body.currency,
+        language: body.language,
+        monthlyIncome: body.monthlyIncome,
+      );
+
+      return app.AuthSession(
+        accessToken: session.accessToken,
+        refreshToken: session.refreshToken,
+        user: user,
+      );
+    } on AuthException catch (e) {
+      throw _mapAuth(e);
+    } catch (e) {
+      if (e is AppException) rethrow;
+      throw UnknownException(message: e.toString());
     }
   }
 
   @override
   Future<UserModel> me() async {
     try {
-      final response = await _dio.get(ApiEndpoints.me);
-      final data = _unwrapData(response.data, endpoint: 'me');
-      // `/auth/me` typically returns `data.user`. Fall back to using `data`
-      // itself if the backend ever flattens the shape.
-      final userMap = (data['user'] is Map<String, dynamic>)
-          ? data['user'] as Map<String, dynamic>
-          : data;
-      return UserModel.fromJson(userMap);
-    } on DioException catch (e) {
-      throw _unwrap(e);
+      final supaUser = _supabase.auth.currentUser;
+      if (supaUser == null) {
+        throw const UnauthorizedException(
+          message: 'غير مسجل الدخول.',
+          statusCode: 401,
+        );
+      }
+      final profile = await _supabase
+          .from('profiles')
+          .select()
+          .eq('id', supaUser.id)
+          .single();
+
+      return UserModel.fromJson({
+        'id': supaUser.id,
+        'phone': profile['phone'] ?? '',
+        ...profile,
+      });
+    } on AuthException catch (e) {
+      throw _mapAuth(e);
+    } catch (e) {
+      if (e is AppException) rethrow;
+      throw UnknownException(message: e.toString());
     }
   }
 
@@ -132,73 +177,74 @@ class AuthRemoteDataSourceImpl implements AuthRemoteDataSource {
     String? language,
   }) async {
     try {
-      final response = await _dio.put(
-        ApiEndpoints.profile,
-        data: {
-          if (name != null) 'name': name,
-          if (email != null) 'email': email,
-          if (monthlyIncome != null) 'monthly_income': monthlyIncome,
-          if (currency != null) 'currency': currency,
-          if (language != null) 'language': language,
-        },
-      );
-      final data = _unwrapData(response.data, endpoint: 'profile');
-      // Same un-wrapping rules as `me`: prefer `data.user`, fall back
-      // to `data` itself if Laravel flattens the shape.
-      final userMap = (data['user'] is Map<String, dynamic>)
-          ? data['user'] as Map<String, dynamic>
-          : data;
-      return UserModel.fromJson(userMap);
-    } on DioException catch (e) {
-      throw _unwrap(e);
+      final supaUser = _supabase.auth.currentUser;
+      if (supaUser == null) {
+        throw const UnauthorizedException(
+          message: 'غير مسجل الدخول.',
+          statusCode: 401,
+        );
+      }
+      final updates = <String, dynamic>{
+        'updated_at': DateTime.now().toIso8601String(),
+        if (name != null) 'name': name,
+        if (email != null) 'email': email,
+        if (monthlyIncome != null) 'monthly_income': monthlyIncome,
+        if (currency != null) 'currency': currency,
+        if (language != null) 'language': language,
+      };
+      final result = await _supabase
+          .from('profiles')
+          .update(updates)
+          .eq('id', supaUser.id)
+          .select()
+          .single();
+
+      return UserModel.fromJson({
+        'id': supaUser.id,
+        'phone': result['phone'] ?? '',
+        ...result,
+      });
+    } on AuthException catch (e) {
+      throw _mapAuth(e);
+    } catch (e) {
+      if (e is AppException) rethrow;
+      throw UnknownException(message: e.toString());
     }
   }
 
   @override
   Future<void> logout() async {
     try {
-      await _dio.post(ApiEndpoints.logout);
-    } on DioException catch (e) {
-      throw _unwrap(e);
+      await _supabase.auth.signOut();
+    } on AuthException catch (e) {
+      throw _mapAuth(e);
     }
   }
 
-  @override
-  Future<void> logoutAll() async {
-    try {
-      await _dio.post(ApiEndpoints.logoutAll);
-    } on DioException catch (e) {
-      throw _unwrap(e);
-    }
-  }
-
-  /// Strips the `{ success, message, data }` envelope and returns the inner
-  /// `data` map. If the backend ever returns the payload un-wrapped, we
-  /// assume the whole body is the payload.
-  Map<String, dynamic> _unwrapData(
-    Object? body, {
-    required String endpoint,
-  }) {
-    if (body is! Map<String, dynamic>) {
-      throw ServerException(
-        message: 'Unexpected $endpoint response shape.',
+  AppException _mapAuth(AuthException e) {
+    final msg = e.message;
+    if (msg.contains('Invalid login credentials')) {
+      return const UnauthorizedException(
+        message: 'رقم الجوال أو كلمة المرور غير صحيحة.',
+        statusCode: 401,
       );
     }
-    final inner = body['data'];
-    if (inner is Map<String, dynamic>) return inner;
-    // Some Laravel resources skip the wrapping when `data` is empty/null.
-    return body;
-  }
-
-  /// `ErrorInterceptor` puts an [AppException] in `DioException.error`. If
-  /// for some reason that didn't happen, fall back to mapping it here.
-  AppException _unwrap(DioException e) {
-    final inner = e.error;
-    if (inner is AppException) return inner;
-    return mapDioException(e);
+    if (msg.contains('already registered') || msg.contains('already exists')) {
+      return const ValidationException(
+        message: 'هذا الرقم مسجّل مسبقاً. سجّل الدخول مباشرة.',
+        statusCode: 422,
+      );
+    }
+    if (msg.contains('Password should be')) {
+      return ValidationException(message: msg, statusCode: 422);
+    }
+    if (msg.contains('rate') || msg.contains('Too many')) {
+      return RateLimitException(message: msg);
+    }
+    return ServerException(message: msg);
   }
 }
 
 final authRemoteDataSourceProvider = Provider<AuthRemoteDataSource>((ref) {
-  return AuthRemoteDataSourceImpl(ref.watch(dioProvider));
+  return AuthRemoteDataSourceImpl(ref.watch(supabaseClientProvider));
 });

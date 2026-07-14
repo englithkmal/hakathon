@@ -1,22 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:intl_phone_field_v2/phone_number.dart';
 
 import '../../../../core/constants/app_sizes.dart';
 import '../../../../core/constants/app_strings.dart';
 import '../../../../core/localization/app_localization.dart';
-import '../../../../core/localization/locale_provider.dart';
-import '../../../../core/notifications/notification_providers.dart';
+import '../../../../core/routes/route_names.dart';
 import '../../../../core/theme/text_styles.dart';
 import '../../../../core/widgets/custom_button.dart';
 import '../providers/auth_provider.dart';
+import '../widgets/password_field.dart';
 import '../widgets/phone_input_field.dart';
 
-/// Phone-number entry screen — first stop in the auth flow.
-///
-/// Layout follows the **Serene Finance** spec: a sticky white app bar with a
-/// primary-coloured back button + title, a left-aligned welcome heading, the
-/// phone input, the primary submit button, and inline T&C copy at the bottom.
+/// Login screen — phone number + password. Replaces the old OTP flow.
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
 
@@ -25,12 +22,20 @@ class LoginScreen extends ConsumerStatefulWidget {
 }
 
 class _LoginScreenState extends ConsumerState<LoginScreen> {
+  final _passwordController = TextEditingController();
+
   PhoneNumber? _phone;
   bool _isPhoneValid = false;
-  String? _errorText;
+  String? _phoneError;
+  String? _passwordError;
+  String? _generalError;
   bool _submitting = false;
 
-  bool get _canSubmit => _isPhoneValid && !_submitting;
+  @override
+  void dispose() {
+    _passwordController.dispose();
+    super.dispose();
+  }
 
   void _onPhoneChanged(PhoneNumber phone) {
     bool valid = false;
@@ -39,63 +44,50 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     } catch (_) {
       valid = false;
     }
-
     setState(() {
       _phone = phone;
       _isPhoneValid = valid;
-      if (_errorText != null) _errorText = null;
+      if (_phoneError != null) _phoneError = null;
+      if (_generalError != null) _generalError = null;
     });
   }
 
   Future<void> _submit() async {
     final phone = _phone;
-    if (phone == null) {
-      setState(() => _errorText = context.tr(AppStrings.authPhoneInvalid));
-      return;
+    final password = _passwordController.text;
+    final invalidMsg = context.tr(AppStrings.authPhoneInvalid);
+    final tooShortMsg = context.tr(AppStrings.authPasswordTooShort);
+
+    bool hasError = false;
+
+    if (phone == null || !_isPhoneValid) {
+      _phoneError = invalidMsg;
+      hasError = true;
+    } else {
+      _phoneError = null;
     }
 
-    bool valid;
-    try {
-      valid = phone.isValidNumber();
-    } catch (_) {
-      valid = false;
+    if (password.length < 6) {
+      _passwordError = tooShortMsg;
+      hasError = true;
+    } else {
+      _passwordError = null;
     }
 
-    if (!valid) {
-      setState(() => _errorText = context.tr(AppStrings.authPhoneInvalid));
+    if (hasError) {
+      setState(() {});
       return;
     }
 
     setState(() {
-      _errorText = null;
       _submitting = true;
+      _generalError = null;
     });
 
-    final localeCode = ref.read(localeProvider).languageCode;
-    final e164 = phone.completeNumber; // e.g. "+966512345678" or "+967771234567"
-    // Build the display variant straight from the library fields so we don't
-    // mis-split the dial code (e.g. naive heuristics rendered "+9677 77…"
-    // instead of "+967 777…"). `countryCode` already includes the leading `+`.
-    final displayPhone = '${phone.countryCode} ${phone.number}';
-
-    // Best-effort fetch of the FCM token so the backend can deliver the OTP
-    // (and follow-up alerts) as a push. Never blocks the user — if FCM is
-    // unavailable, we still send the request and the backend falls back.
-    String? deviceToken;
-    try {
-      deviceToken = await ref
-          .read(notificationServiceProvider)
-          .getToken()
-          .timeout(const Duration(seconds: 3));
-    } catch (_) {
-      deviceToken = null;
-    }
-
-    final failure = await ref.read(authProvider.notifier).requestOtp(
+    final e164 = phone!.completeNumber;
+    final failure = await ref.read(authProvider.notifier).login(
           phoneE164: e164,
-          displayPhone: displayPhone,
-          locale: localeCode,
-          deviceToken: deviceToken,
+          password: password,
         );
 
     if (!mounted) return;
@@ -103,11 +95,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
     if (failure != null) {
       setState(() {
-        _errorText = failure.message ?? context.tr(AppStrings.authPhoneInvalid);
+        _generalError =
+            failure.message ?? context.tr(AppStrings.authLoginInvalid);
       });
-      return;
     }
-    // Router redirect will move us to /login/otp.
+    // On success, the router redirect sends us to /home automatically.
   }
 
   @override
@@ -115,76 +107,78 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final invalidMsg = context.tr(AppStrings.authPhoneInvalid);
+    final canSubmit = !_submitting;
 
     return Scaffold(
       backgroundColor: scheme.surface,
       body: SafeArea(
-        child: Column(
-        children: [
-          Expanded(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(
-                AppSpacing.mobileMargin,
-                AppSpacing.xl,
-                AppSpacing.mobileMargin,
-                AppSpacing.lg,
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  const SizedBox(height: AppSpacing.lg),
-                  // Heading block — "أهلاً بك" + tagline (left-aligned in RTL,
-                  // start-aligned in LTR).
-                  Text(
-                    context.tr(AppStrings.authWelcomeHeading),
-                    style: AppTextStyles.headlineXl(color: scheme.onSurface),
-                  ),
-                  const SizedBox(height: AppSpacing.sm),
-                  Text(
-                    context.tr(AppStrings.authWelcomeTagline),
-                    style:
-                        AppTextStyles.bodyMd(color: scheme.onSurfaceVariant),
-                  ),
-                  const SizedBox(height: AppSpacing.xl),
-                  PhoneInputField(
-                    label: context.tr(AppStrings.authPhoneLabel),
-                    hint: context.tr(AppStrings.authPhoneHint),
-                    errorText: _errorText,
-                    enabled: !_submitting,
-                    invalidNumberMessage: invalidMsg,
-                    onChanged: _onPhoneChanged,
-                    onSubmitted: () {
-                      if (_canSubmit) _submit();
-                    },
-                  ),
-                  const SizedBox(height: AppSpacing.xl),
-                  CustomButton(
-                    label: context.tr(AppStrings.authContinue),
-                    isLoading: _submitting,
-                    onPressed: _canSubmit ? _submit : null,
-                  ),
-                ],
-              ),
-            ),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(
+            AppSpacing.mobileMargin,
+            AppSpacing.xl,
+            AppSpacing.mobileMargin,
+            AppSpacing.lg,
           ),
-          // Inline T&C footer — links styled in primary.
-          Padding(
-            padding: const EdgeInsets.fromLTRB(
-              AppSpacing.mobileMargin,
-              AppSpacing.sm,
-              AppSpacing.mobileMargin,
-              AppSpacing.lg,
-            ),
-            child: _TermsFootnote(),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const SizedBox(height: AppSpacing.lg),
+              Text(
+                context.tr(AppStrings.authWelcomeHeading),
+                style: AppTextStyles.headlineXl(color: scheme.onSurface),
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              Text(
+                context.tr(AppStrings.authWelcomeTagline),
+                style: AppTextStyles.bodyMd(color: scheme.onSurfaceVariant),
+              ),
+              const SizedBox(height: AppSpacing.xl),
+              PhoneInputField(
+                label: context.tr(AppStrings.authPhoneLabel),
+                hint: context.tr(AppStrings.authPhoneHint),
+                errorText: _phoneError,
+                enabled: !_submitting,
+                invalidNumberMessage: invalidMsg,
+                onChanged: _onPhoneChanged,
+              ),
+              const SizedBox(height: AppSpacing.md),
+              PasswordField(
+                controller: _passwordController,
+                label: context.tr(AppStrings.authPasswordLabel),
+                hint: context.tr(AppStrings.authPasswordHint),
+                errorText: _passwordError,
+                enabled: !_submitting,
+                textInputAction: TextInputAction.done,
+                onSubmitted: canSubmit ? _submit : null,
+              ),
+              if (_generalError != null) ...[
+                const SizedBox(height: AppSpacing.sm),
+                Text(
+                  _generalError!,
+                  style: AppTextStyles.bodySm(color: scheme.error),
+                ),
+              ],
+              const SizedBox(height: AppSpacing.xl),
+              CustomButton(
+                label: context.tr(AppStrings.authLoginSubmit),
+                isLoading: _submitting,
+                onPressed: canSubmit ? _submit : null,
+              ),
+              const SizedBox(height: AppSpacing.lg),
+              _RegisterLink(submitting: _submitting),
+            ],
           ),
-        ],
         ),
       ),
     );
   }
 }
 
-class _TermsFootnote extends StatelessWidget {
+class _RegisterLink extends StatelessWidget {
+  const _RegisterLink({required this.submitting});
+
+  final bool submitting;
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
@@ -196,21 +190,25 @@ class _TermsFootnote extends StatelessWidget {
       decorationThickness: 1.2,
     );
 
-    return Text.rich(
-      TextSpan(
-        children: [
-          TextSpan(text: context.tr(AppStrings.authTermsNotePrefix)),
-          TextSpan(text: context.tr(AppStrings.authTermsNoteTerms), style: link),
-          TextSpan(text: context.tr(AppStrings.authTermsNoteAnd)),
+    return Center(
+      child: GestureDetector(
+        onTap: submitting
+            ? null
+            : () => context.push(RouteNames.registerPath),
+        child: Text.rich(
           TextSpan(
-            text: context.tr(AppStrings.authTermsNotePrivacy),
-            style: link,
+            children: [
+              TextSpan(text: context.tr(AppStrings.authNoAccountYet)),
+              TextSpan(
+                text: context.tr(AppStrings.authCreateAccountLink),
+                style: link,
+              ),
+            ],
           ),
-          TextSpan(text: context.tr(AppStrings.authTermsNoteSuffix)),
-        ],
+          style: base,
+          textAlign: TextAlign.center,
+        ),
       ),
-      textAlign: TextAlign.center,
-      style: base,
     );
   }
 }

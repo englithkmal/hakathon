@@ -1,27 +1,18 @@
-import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../../core/errors/exceptions.dart';
-import '../../../../core/network/api_endpoints.dart';
-import '../../../../core/network/dio_provider.dart';
-import '../../../../core/network/error_interceptor.dart';
+import '../../../../core/supabase/supabase_provider.dart';
 import '../models/selected_period.dart';
 
-/// Speaks to `GET /period`.
+/// يحدد الفترة (الشهر/السنة) النشطة للمستخدم.
 ///
-/// The endpoint returns the canonical period the rest of the app should
-/// align to (`Dashboard`, `Budgets/current`, `Insights`, `Monthly
-/// Summaries`). The client should call this once on cold-start and reuse
-/// the resolved `month`/`year` everywhere — never compute the period
-/// locally.
+/// بدل استدعاء API، نحسبها محلياً:
+///  - إذا تم تمرير month/year أو periodStart → `source: explicit`.
+///  - وإلا نبحث عن آخر ميزانية نشطة (`status = active`) للمستخدم
+///    → `source: latest_budget`.
+///  - وإلا → شهر السيرفر الحالي (`source: server_now`).
 abstract class PeriodRemoteDataSource {
-  /// Fetches the active period.
-  ///
-  /// All three params are mutually exclusive — supplying [month]+[year]
-  /// or [periodStart] makes the response carry `source: explicit` /
-  /// `source: period_start_param`. Without any of them the server picks
-  /// the user's latest active budget month, then falls back to the
-  /// server's current month.
   Future<SelectedPeriod> fetchPeriod({
     int? month,
     int? year,
@@ -30,9 +21,9 @@ abstract class PeriodRemoteDataSource {
 }
 
 class PeriodRemoteDataSourceImpl implements PeriodRemoteDataSource {
-  PeriodRemoteDataSourceImpl(this._dio);
+  PeriodRemoteDataSourceImpl(this._supabase);
 
-  final Dio _dio;
+  final SupabaseClient _supabase;
 
   @override
   Future<SelectedPeriod> fetchPeriod({
@@ -41,68 +32,84 @@ class PeriodRemoteDataSourceImpl implements PeriodRemoteDataSource {
     String? periodStart,
   }) async {
     try {
-      final qp = <String, dynamic>{};
-      if (month != null) qp['month'] = month;
-      if (year != null) qp['year'] = year;
+      // 1) صريح
+      if (month != null && year != null) {
+        return _periodFor(year, month, PeriodSource.explicit);
+      }
       if (periodStart != null && periodStart.isNotEmpty) {
-        qp['period_start'] = periodStart;
-      }
-      // Cache-bust so a freshly-created budget shows up right away on
-      // the next /period call (the server's "latest_budget" picker
-      // reads from the budgets table, not a snapshot).
-      qp['_t'] = DateTime.now().millisecondsSinceEpoch;
-
-      final res = await _dio.get(
-        ApiEndpoints.period,
-        queryParameters: qp,
-        options: Options(
-          headers: const {
-            'Cache-Control': 'no-cache',
-            'Pragma': 'no-cache',
-          },
-        ),
-      );
-      final body = res.data;
-      if (body is! Map<String, dynamic>) {
-        throw const ServerException(
-          message: 'Unexpected /period response shape.',
-        );
-      }
-      // Spec: `{ success, data: { period: { ... } } }`.
-      // Tolerate Laravel returning `data` as the period directly, or
-      // bypassing the envelope entirely when the resource isn't
-      // wrapped on the server side.
-      final data = body['data'];
-      Map<String, dynamic>? periodMap;
-      if (data is Map<String, dynamic>) {
-        final inner = data['period'];
-        if (inner is Map<String, dynamic>) {
-          periodMap = inner;
-        } else {
-          periodMap = data;
+        final d = DateTime.tryParse(periodStart);
+        if (d != null) {
+          return _periodFor(d.year, d.month, PeriodSource.periodStartParam);
         }
-      } else {
-        final inner = body['period'];
-        if (inner is Map<String, dynamic>) periodMap = inner;
       }
-      if (periodMap == null) {
-        throw const ServerException(
-          message: 'Unexpected /period response: no period object.',
-        );
+
+      // 2) آخر ميزانية نشطة
+      final userId = _supabase.auth.currentUser?.id;
+      if (userId != null) {
+        final res = await _supabase
+            .from('budgets')
+            .select('id, month, year')
+            .eq('user_id', userId)
+            .eq('status', 'active')
+            .order('year', ascending: false)
+            .order('month', ascending: false)
+            .limit(1)
+            .maybeSingle();
+
+        if (res != null) {
+          final m = _toInt(res['month']);
+          final y = _toInt(res['year']);
+          return _periodFor(
+            y,
+            m,
+            PeriodSource.latestBudget,
+            budgetId: _toInt(res['id']),
+          );
+        }
       }
-      return SelectedPeriod.fromJson(periodMap);
-    } on DioException catch (e) {
-      throw _unwrap(e);
+
+      // 3) شهر السيرفر الحالي
+      final now = DateTime.now();
+      return _periodFor(now.year, now.month, PeriodSource.serverNow);
+    } catch (e) {
+      if (e is AppException) rethrow;
+      throw UnknownException(message: e.toString());
     }
   }
 
-  AppException _unwrap(DioException e) {
-    final inner = e.error;
-    if (inner is AppException) return inner;
-    return mapDioException(e);
+  SelectedPeriod _periodFor(
+    int year,
+    int month,
+    PeriodSource source, {
+    int? budgetId,
+  }) {
+    final firstOfMonth = DateTime(year, month, 1);
+    final lastOfMonth = DateTime(year, month + 1, 0);
+    return SelectedPeriod(
+      month: month,
+      year: year,
+      periodStart: _ymd(firstOfMonth),
+      periodEnd: _ymd(lastOfMonth),
+      source: source,
+      budgetId: budgetId,
+    );
   }
 }
 
+String _ymd(DateTime d) {
+  final y = d.year.toString().padLeft(4, '0');
+  final m = d.month.toString().padLeft(2, '0');
+  final day = d.day.toString().padLeft(2, '0');
+  return '$y-$m-$day';
+}
+
+int _toInt(Object? v) {
+  if (v == null) return 0;
+  if (v is int) return v;
+  if (v is num) return v.toInt();
+  return int.tryParse(v.toString()) ?? 0;
+}
+
 final periodRemoteDataSourceProvider = Provider<PeriodRemoteDataSource>((ref) {
-  return PeriodRemoteDataSourceImpl(ref.watch(dioProvider));
+  return PeriodRemoteDataSourceImpl(ref.watch(supabaseClientProvider));
 });

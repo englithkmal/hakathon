@@ -1,13 +1,10 @@
-import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../../core/errors/exceptions.dart';
-import '../../../../core/network/api_endpoints.dart';
-import '../../../../core/network/dio_provider.dart';
-import '../../../../core/network/error_interceptor.dart';
+import '../../../../core/supabase/supabase_provider.dart';
 import '../models/monthly_summary_model.dart';
 
-/// Page of `MonthlySummaryResource` rows from `GET /monthly-summaries`.
 class MonthlySummariesPage {
   const MonthlySummariesPage({
     required this.items,
@@ -15,19 +12,14 @@ class MonthlySummariesPage {
     required this.lastPage,
     required this.total,
   });
-
   final List<MonthlySummaryModel> items;
   final int currentPage;
   final int lastPage;
   final int total;
-
   bool get hasMore => currentPage < lastPage;
 }
 
 abstract class MonthlySummariesRemoteDataSource {
-  /// `GET /monthly-summaries`. The optional [status] filters between
-  /// `open` (rolling) and `closed` (finalised) months — `null` returns
-  /// the server's default mix. [year] narrows to a single calendar year.
   Future<MonthlySummariesPage> fetchPage({
     int page = 1,
     int perPage = 20,
@@ -35,19 +27,11 @@ abstract class MonthlySummariesRemoteDataSource {
     int? year,
   });
 
-  /// `GET /monthly-summaries/{year}/{month}`.
   Future<MonthlySummaryModel> fetchByYearMonth({
     required int year,
     required int month,
   });
 
-  /// `POST /monthly-summaries/{id}/allocate` — moves part of the
-  /// month's `unallocated_remaining` into a single saving goal.
-  ///
-  /// The new server contract takes one allocation per request:
-  /// `{ saving_goal_id, amount, note? }`. Callers that need to split
-  /// the surplus across multiple goals should issue the requests
-  /// serially (the allocate notifier does this for us).
   Future<MonthlySummaryAllocateResult> allocate({
     required int summaryId,
     required int savingGoalId,
@@ -56,11 +40,26 @@ abstract class MonthlySummariesRemoteDataSource {
   });
 }
 
-class MonthlySummariesRemoteDataSourceImpl
-    implements MonthlySummariesRemoteDataSource {
-  MonthlySummariesRemoteDataSourceImpl(this._dio);
+/// يتوقع جدول `monthly_summaries` بالأعمدة:
+/// id, user_id, year, month, period_start, period_end, currency,
+/// allocation_status, allocated_amount, unallocated_remaining,
+/// closed_at, closed_by, notes
+///
+/// السطور تُنشأ عبر عملية "إقفال الشهر" (يدوياً أو بمهمة مجدولة).
+/// هذا الـ data source يحسب cash_flow + top_categories من
+/// transactions في وقت القراءة.
+class MonthlySummariesRemoteDataSourceImpl implements MonthlySummariesRemoteDataSource {
+  MonthlySummariesRemoteDataSourceImpl(this._supabase);
 
-  final Dio _dio;
+  final SupabaseClient _supabase;
+
+  String get _userId {
+    final id = _supabase.auth.currentUser?.id;
+    if (id == null) {
+      throw const UnauthorizedException(message: 'غير مسجل الدخول', statusCode: 401);
+    }
+    return id;
+  }
 
   @override
   Future<MonthlySummariesPage> fetchPage({
@@ -70,66 +69,47 @@ class MonthlySummariesRemoteDataSourceImpl
     int? year,
   }) async {
     try {
-      final qp = <String, dynamic>{
-        'page': page,
-        'per_page': perPage,
-        '_t': DateTime.now().millisecondsSinceEpoch,
-      };
-      if (status != null && status.isNotEmpty) qp['status'] = status;
-      if (year != null) qp['year'] = year;
-      final res = await _dio.get(
-        ApiEndpoints.monthlySummaries,
-        queryParameters: qp,
-        options: _noCache(),
-      );
-      final body = res.data;
-      if (body is! Map<String, dynamic>) {
-        throw const ServerException(
-          message: 'Unexpected /monthly-summaries response shape.',
-        );
-      }
-      final raw = body['data'];
+      final from0 = (page - 1) * perPage;
+      final to0 = from0 + perPage - 1;
 
-      // Spec ships `data: { items: [...], meta: {...} }`. Older
-      // deploys ship `data: [...]` with `meta` at the root, or a
-      // Laravel paginator (`data: { data: [...], current_page, ... }`).
-      // Handle all three transparently so deploys can flip without
-      // breaking the client.
-      List<Map<String, dynamic>> rows = const [];
-      Map<String, dynamic>? meta;
-      if (raw is List) {
-        rows = _castList(raw);
-        if (body['meta'] is Map<String, dynamic>) {
-          meta = body['meta'] as Map<String, dynamic>;
-        }
-      } else if (raw is Map<String, dynamic>) {
-        // 1) New canonical shape: `data.items`
-        if (raw['items'] is List) {
-          rows = _castList(raw['items'] as List);
-          if (raw['meta'] is Map<String, dynamic>) {
-            meta = raw['meta'] as Map<String, dynamic>;
-          } else if (body['meta'] is Map<String, dynamic>) {
-            meta = body['meta'] as Map<String, dynamic>;
-          } else {
-            meta = raw;
-          }
-        }
-        // 2) Legacy paginator: `data.data`
-        else if (raw['data'] is List) {
-          rows = _castList(raw['data'] as List);
-          meta = raw;
-        }
+      dynamic query = _supabase
+          .from('monthly_summaries')
+          .select('*')
+          .eq('user_id', _userId);
+
+      if (year != null) query = query.eq('year', year) as dynamic;
+      if (status == 'closed') {
+        query = query.not('closed_at', 'is', null) as dynamic;
+      } else if (status == 'open') {
+        query = query.filter('closed_at', 'is', null) as dynamic;
       }
 
-      final items = rows.map(MonthlySummaryModel.fromJson).toList();
+      query = query
+          .order('year', ascending: false)
+          .order('month', ascending: false)
+          .range(from0, to0) as dynamic;
+
+      final res = await query.count(CountOption.exact);
+      final rows = (res.data as List).cast<Map<String, dynamic>>();
+      final total = res.count ?? rows.length;
+      final lastPage = (total / perPage).ceil().clamp(1, 999999);
+
+      final items = <MonthlySummaryModel>[];
+      for (final r in rows) {
+        items.add(await _withCashFlow(r));
+      }
+
       return MonthlySummariesPage(
         items: items,
-        currentPage: _toInt(meta?['current_page'] ?? page, fallback: page),
-        lastPage: _toInt(meta?['last_page'] ?? page, fallback: page),
-        total: _toInt(meta?['total'] ?? items.length, fallback: items.length),
+        currentPage: page,
+        lastPage: lastPage,
+        total: total,
       );
-    } on DioException catch (e) {
-      throw _unwrap(e);
+    } on PostgrestException catch (e) {
+      throw ServerException(message: e.message);
+    } catch (e) {
+      if (e is AppException) rethrow;
+      throw UnknownException(message: e.toString());
     }
   }
 
@@ -139,16 +119,39 @@ class MonthlySummariesRemoteDataSourceImpl
     required int month,
   }) async {
     try {
-      final res = await _dio.get(
-        ApiEndpoints.monthlySummaryByYearMonth(year, month),
-        queryParameters: {
-          '_t': DateTime.now().millisecondsSinceEpoch,
-        },
-        options: _noCache(),
-      );
-      return MonthlySummaryModel.fromJson(_unwrap200(res.data, 'detail'));
-    } on DioException catch (e) {
-      throw _unwrap(e);
+      final row = await _supabase
+          .from('monthly_summaries')
+          .select()
+          .eq('user_id', _userId)
+          .eq('year', year)
+          .eq('month', month)
+          .maybeSingle();
+
+      if (row == null) {
+        // لا يوجد سجل إقفال — نبني واحداً افتراضياً (مفتوح) من المعاملات
+        final first = DateTime(year, month, 1);
+        final last = DateTime(year, month + 1, 0);
+        return _withCashFlow({
+          'id': 0,
+          'year': year,
+          'month': month,
+          'period_start': _ymd(first),
+          'period_end': _ymd(last),
+          'allocation_status': 'unallocated',
+          'allocated_amount': 0,
+          'unallocated_remaining': 0,
+          'closed_at': null,
+          'closed_by': null,
+          'notes': '',
+        });
+      }
+
+      return _withCashFlow(Map<String, dynamic>.from(row));
+    } on PostgrestException catch (e) {
+      throw ServerException(message: e.message);
+    } catch (e) {
+      if (e is AppException) rethrow;
+      throw UnknownException(message: e.toString());
     }
   }
 
@@ -160,72 +163,177 @@ class MonthlySummariesRemoteDataSourceImpl
     String? note,
   }) async {
     try {
-      final body = <String, dynamic>{
-        'saving_goal_id': savingGoalId,
-        'amount': amount,
-      };
-      if (note != null && note.trim().isNotEmpty) {
-        body['note'] = note.trim();
+      final summaryRow = await _supabase
+          .from('monthly_summaries')
+          .select()
+          .eq('id', summaryId)
+          .single();
+
+      final currentRemaining = _toDouble(summaryRow['unallocated_remaining']);
+      if (amount > currentRemaining + 0.01) {
+        throw ValidationException(
+          message: 'المبلغ أكبر من المتبقي غير المخصّص.',
+          statusCode: 422,
+        );
       }
-      final res = await _dio.post(
-        ApiEndpoints.monthlySummaryAllocate(summaryId),
-        data: body,
-      );
-      return MonthlySummaryAllocateResult.fromJson(
-        _unwrap200(res.data, 'allocate'),
-      );
-    } on DioException catch (e) {
-      throw _unwrap(e);
-    }
-  }
 
-  /// Pulls the resource map out of either `{ data: {...} }` or a flat
-  /// top-level shape — Laravel resource wrappers are inconsistent
-  /// across deploys.
-  Map<String, dynamic> _unwrap200(Object? body, String label) {
-    if (body is! Map<String, dynamic>) {
-      throw ServerException(
-        message: 'Unexpected /monthly-summaries $label response shape.',
-      );
-    }
-    final inner = body['data'];
-    if (inner is Map<String, dynamic>) return inner;
-    return body;
-  }
+      // 1) إنشاء transaction من نوع saving
+      final txRow = await _supabase
+          .from('transactions')
+          .insert({
+            'user_id': _userId,
+            'amount': amount,
+            'currency': (summaryRow['currency'] ?? 'SAR').toString(),
+            'type': 'saving',
+            'description': note ?? '',
+            'merchant': '',
+            'source': 'allocation',
+            'reference': '',
+            'transaction_date': _ymd(DateTime.now()),
+            'saving_goal_id': savingGoalId,
+          })
+          .select()
+          .single();
 
-  Options _noCache() => Options(
-        headers: const {
-          'Cache-Control': 'no-cache',
-          'Pragma': 'no-cache',
+      // 2) تحديث الهدف
+      final goalRow = await _supabase
+          .from('saving_goals')
+          .select()
+          .eq('id', savingGoalId)
+          .single();
+      final newCurrent = _toDouble(goalRow['current_amount']) + amount;
+      final target = _toDouble(goalRow['target_amount']);
+      final updatedGoal = await _supabase
+          .from('saving_goals')
+          .update({'current_amount': newCurrent})
+          .eq('id', savingGoalId)
+          .select()
+          .single();
+
+      // 3) تحديث ملخص الشهر
+      final newAllocated = _toDouble(summaryRow['allocated_amount']) + amount;
+      final newRemaining = (currentRemaining - amount).clamp(0.0, double.infinity);
+      final newStatus = newRemaining <= 0.01 ? 'fully_allocated' : 'partially_allocated';
+
+      final updatedSummary = await _supabase
+          .from('monthly_summaries')
+          .update({
+            'allocated_amount': newAllocated,
+            'unallocated_remaining': newRemaining,
+            'allocation_status': newStatus,
+          })
+          .eq('id', summaryId)
+          .select()
+          .single();
+
+      return MonthlySummaryAllocateResult.fromJson({
+        'transaction': txRow,
+        'monthly_summary': updatedSummary,
+        'saving_goal': {
+          ...updatedGoal,
+          'progress_percentage': target > 0 ? (newCurrent / target * 100).clamp(0, 100) : 0,
         },
-      );
-
-  AppException _unwrap(DioException e) {
-    final inner = e.error;
-    if (inner is AppException) return inner;
-    return mapDioException(e);
+      });
+    } on PostgrestException catch (e) {
+      throw ServerException(message: e.message);
+    } catch (e) {
+      if (e is AppException) rethrow;
+      throw UnknownException(message: e.toString());
+    }
   }
 
-  List<Map<String, dynamic>> _castList(List raw) {
-    return raw
-        .map((e) {
-          if (e is Map<String, dynamic>) return e;
-          if (e is Map) return e.cast<String, dynamic>();
-          return const <String, dynamic>{};
-        })
-        .where((e) => e.isNotEmpty)
-        .toList();
+  /// يحسب income/expenses/goal_deposits/top_categories من جدول
+  /// transactions للفترة period_start..period_end.
+  Future<MonthlySummaryModel> _withCashFlow(Map<String, dynamic> row) async {
+    final periodStart = (row['period_start'] ?? '').toString();
+    final periodEnd = (row['period_end'] ?? '').toString();
+
+    double income = 0, expenses = 0, goalDeposits = 0;
+    int txCount = 0;
+    final byCategory = <int, Map<String, dynamic>>{};
+
+    if (periodStart.isNotEmpty && periodEnd.isNotEmpty) {
+      final txs = await _supabase
+          .from('transactions')
+          .select('*, categories(*)')
+          .eq('user_id', _userId)
+          .gte('transaction_date', periodStart)
+          .lte('transaction_date', periodEnd) as List;
+
+      txCount = txs.length;
+      for (final raw in txs) {
+        final t = Map<String, dynamic>.from(raw);
+        final amount = _toDouble(t['amount']).abs();
+        final type = (t['type'] ?? 'expense').toString();
+        if (type == 'income') {
+          income += amount;
+        } else if (type == 'saving') {
+          goalDeposits += amount;
+        } else {
+          expenses += amount;
+          final cat = t['categories'] is Map ? Map<String, dynamic>.from(t['categories'] as Map) : <String, dynamic>{};
+          final catId = _toInt(cat['id']);
+          if (catId > 0) {
+            final entry = byCategory.putIfAbsent(catId, () => {
+                  'category_id': catId,
+                  'name_ar': cat['name_ar'],
+                  'name_en': cat['name_en'],
+                  'total': 0.0,
+                  'count': 0,
+                });
+            entry['total'] = (entry['total'] as double) + amount;
+            entry['count'] = (entry['count'] as int) + 1;
+          }
+        }
+      }
+    }
+
+    final topCategories = byCategory.values.toList()
+      ..sort((a, b) => (b['total'] as double).compareTo(a['total'] as double));
+    final topCatsJson = topCategories.take(5).map((e) {
+      final total = e['total'] as double;
+      return {
+        ...e,
+        'percentage': expenses > 0 ? (total / expenses * 100) : 0.0,
+      };
+    }).toList();
+
+    return MonthlySummaryModel.fromJson({
+      ...row,
+      'cash_flow': {
+        'total_income': income,
+        'total_expenses': expenses,
+        'total_goal_deposits': goalDeposits,
+        'unallocated_savings': income - expenses - goalDeposits,
+      },
+      'transaction_count': txCount,
+      'top_categories': topCatsJson,
+    });
   }
 }
 
-int _toInt(Object? v, {int fallback = 0}) {
-  if (v == null) return fallback;
+String _ymd(DateTime d) {
+  final y = d.year.toString().padLeft(4, '0');
+  final m = d.month.toString().padLeft(2, '0');
+  final day = d.day.toString().padLeft(2, '0');
+  return '$y-$m-$day';
+}
+
+double _toDouble(Object? v) {
+  if (v == null) return 0;
+  if (v is double) return v;
+  if (v is num) return v.toDouble();
+  return double.tryParse(v.toString()) ?? 0;
+}
+
+int _toInt(Object? v) {
+  if (v == null) return 0;
   if (v is int) return v;
   if (v is num) return v.toInt();
-  return int.tryParse(v.toString()) ?? fallback;
+  return int.tryParse(v.toString()) ?? 0;
 }
 
 final monthlySummariesRemoteDataSourceProvider =
     Provider<MonthlySummariesRemoteDataSource>((ref) {
-  return MonthlySummariesRemoteDataSourceImpl(ref.watch(dioProvider));
+  return MonthlySummariesRemoteDataSourceImpl(ref.watch(supabaseClientProvider));
 });

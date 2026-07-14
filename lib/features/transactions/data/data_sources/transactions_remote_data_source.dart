@@ -1,10 +1,8 @@
-import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../../core/errors/exceptions.dart';
-import '../../../../core/network/api_endpoints.dart';
-import '../../../../core/network/dio_provider.dart';
-import '../../../../core/network/error_interceptor.dart';
+import '../../../../core/supabase/supabase_provider.dart';
 import '../models/transaction_model.dart';
 
 class TransactionsPage {
@@ -24,11 +22,6 @@ class TransactionsPage {
 }
 
 abstract class TransactionsRemoteDataSource {
-  /// Generic pagination call. The optional named filters map directly
-  /// to Laravel query params:
-  ///   - `categoryId`  → `category_id`
-  ///   - `type`        → `type` (`expense` | `income` | `saving`)
-  ///   - `from` / `to` → `from` / `to` (`YYYY-MM-DD`)
   Future<TransactionsPage> fetchPage({
     int page = 1,
     int perPage = 50,
@@ -39,26 +32,15 @@ abstract class TransactionsRemoteDataSource {
   });
 
   Future<TransactionModel> create(CreateTransactionPayload payload);
-
-  /// `PUT /transactions/{id}` — updates an existing transaction. Only
-  /// the fields set on [payload] are sent (Laravel treats unset keys
-  /// as `sometimes|`-skipped, so the rest stay as-is).
-  ///
-  /// Returns the freshly-persisted row so the caller can swap it into
-  /// any cached lists.
   Future<TransactionModel> update(int id, UpdateTransactionPayload payload);
-
-  /// `DELETE /transactions/{id}` — removes the transaction. The server
-  /// reverses the matching budget rollups + (for `type=saving` rows)
-  /// decrements the linked goal's `current_amount`. The caller should
-  /// invalidate any cached aggregates after this returns.
   Future<void> delete(int id);
 }
 
-class TransactionsRemoteDataSourceImpl implements TransactionsRemoteDataSource {
-  TransactionsRemoteDataSourceImpl(this._dio);
+class TransactionsRemoteDataSourceImpl
+    implements TransactionsRemoteDataSource {
+  TransactionsRemoteDataSourceImpl(this._supabase);
 
-  final Dio _dio;
+  final SupabaseClient _supabase;
 
   @override
   Future<TransactionsPage> fetchPage({
@@ -70,150 +52,150 @@ class TransactionsRemoteDataSourceImpl implements TransactionsRemoteDataSource {
     DateTime? to,
   }) async {
     try {
-      final params = <String, dynamic>{
-        'page': page,
-        'per_page': perPage,
-        '_t': DateTime.now().millisecondsSinceEpoch,
-      };
-      if (categoryId != null) params['category_id'] = categoryId;
-      if (type != null && type.isNotEmpty) params['type'] = type;
-      if (from != null) params['from'] = _ymd(from);
-      if (to != null) params['to'] = _ymd(to);
+      final userId = _supabase.auth.currentUser?.id;
+      if (userId == null) throw const UnauthorizedException(message: 'غير مسجل', statusCode: 401);
 
-      final res = await _dio.get(
-        ApiEndpoints.transactions,
-        queryParameters: params,
-        options: Options(
-          headers: const {
-            'Cache-Control': 'no-cache',
-            'Pragma': 'no-cache',
-          },
-        ),
-      );
-      final inner = _unwrapData(res.data);
-      final list = _extractItems(inner)
-          .map(TransactionModel.fromJson)
+      final from0 = (page - 1) * perPage;
+      final to0 = from0 + perPage - 1;
+
+      dynamic query = _supabase
+          .from('transactions')
+          .select('*, categories(*)')
+          .eq('user_id', userId)
+          .order('transaction_date', ascending: false)
+          .range(from0, to0);
+
+      if (categoryId != null) {
+        query = query.eq('category_id', categoryId) as dynamic;
+      }
+      if (type != null && type.isNotEmpty) {
+        query = query.eq('type', type) as dynamic;
+      }
+      if (from != null) {
+        query = query.gte('transaction_date', _ymd(from)) as dynamic;
+      }
+      if (to != null) {
+        query = query.lte('transaction_date', _ymd(to)) as dynamic;
+      }
+
+      final data = await query as List;
+
+      // عدد الكل (count) — استعلام منفصل بدون range
+      dynamic countQuery = _supabase
+          .from('transactions')
+          .select('id')
+          .eq('user_id', userId);
+
+      if (categoryId != null) countQuery = countQuery.eq('category_id', categoryId) as dynamic;
+      if (type != null && type.isNotEmpty) countQuery = countQuery.eq('type', type) as dynamic;
+      if (from != null) countQuery = countQuery.gte('transaction_date', _ymd(from)) as dynamic;
+      if (to != null) countQuery = countQuery.lte('transaction_date', _ymd(to)) as dynamic;
+
+      final countRes = await countQuery.count(CountOption.exact);
+      final total = countRes.count ?? data.length;
+      final lastPage = (total / perPage).ceil().clamp(1, 999999);
+
+      final items = data
+          .map((e) => TransactionModel.fromJson(_flattenCategory(e)))
           .toList();
-      final meta = _extractMeta(inner);
+
       return TransactionsPage(
-        items: list,
-        currentPage: _toInt(meta['current_page'] ?? page, fallback: page),
-        lastPage: _toInt(meta['last_page'] ?? page, fallback: page),
-        total: _toInt(meta['total'] ?? list.length, fallback: list.length),
+        items: items,
+        currentPage: page,
+        lastPage: lastPage,
+        total: total,
       );
-    } on DioException catch (e) {
-      throw _unwrap(e);
+    } on PostgrestException catch (e) {
+      throw _mapPostgrest(e);
+    } catch (e) {
+      if (e is AppException) rethrow;
+      throw UnknownException(message: e.toString());
     }
   }
 
   @override
   Future<TransactionModel> create(CreateTransactionPayload payload) async {
     try {
-      final res = await _dio.post(
-        ApiEndpoints.transactions,
-        data: payload.toJson(),
-      );
-      final inner = _unwrapData(res.data);
-      // Some Laravel resources nest the created row under `data`, others
-      // return it at the top level — accept both.
-      final flat = inner['data'];
-      final map = flat is Map<String, dynamic> ? flat : inner;
-      return TransactionModel.fromJson(map);
-    } on DioException catch (e) {
-      throw _unwrap(e);
+      final userId = _supabase.auth.currentUser?.id;
+      if (userId == null) throw const UnauthorizedException(message: 'غير مسجل', statusCode: 401);
+
+      final body = {
+        ...payload.toJson(),
+        'user_id': userId,
+      };
+
+      final res = await _supabase
+          .from('transactions')
+          .insert(body)
+          .select('*, categories(*)')
+          .single();
+
+      return TransactionModel.fromJson(_flattenCategory(res));
+    } on PostgrestException catch (e) {
+      throw _mapPostgrest(e);
+    } catch (e) {
+      if (e is AppException) rethrow;
+      throw UnknownException(message: e.toString());
     }
   }
 
   @override
   Future<TransactionModel> update(
-    int id,
-    UpdateTransactionPayload payload,
-  ) async {
+      int id, UpdateTransactionPayload payload) async {
     try {
-      final res = await _dio.put(
-        ApiEndpoints.transactionById(id),
-        data: payload.toJson(),
-      );
-      final inner = _unwrapData(res.data);
-      final flat = inner['data'];
-      final map = flat is Map<String, dynamic> ? flat : inner;
-      return TransactionModel.fromJson(map);
-    } on DioException catch (e) {
-      throw _unwrap(e);
+      final res = await _supabase
+          .from('transactions')
+          .update(payload.toJson())
+          .eq('id', id)
+          .select('*, categories(*)')
+          .single();
+
+      return TransactionModel.fromJson(_flattenCategory(res));
+    } on PostgrestException catch (e) {
+      throw _mapPostgrest(e);
+    } catch (e) {
+      if (e is AppException) rethrow;
+      throw UnknownException(message: e.toString());
     }
   }
 
   @override
   Future<void> delete(int id) async {
     try {
-      await _dio.delete(ApiEndpoints.transactionById(id));
-    } on DioException catch (e) {
-      throw _unwrap(e);
+      await _supabase.from('transactions').delete().eq('id', id);
+    } on PostgrestException catch (e) {
+      throw _mapPostgrest(e);
+    } catch (e) {
+      if (e is AppException) rethrow;
+      throw UnknownException(message: e.toString());
     }
   }
 
-  /// Pulls `items` from the most common Laravel pagination shapes:
-  /// `{ data: [...] }`, `{ items: [...] }`, or a bare top-level list.
-  List<Map<String, dynamic>> _extractItems(Map<String, dynamic> body) {
-    final data = body['data'] ?? body['items'] ?? body;
-    if (data is List) return _castList(data);
-    if (data is Map<String, dynamic>) {
-      final nested = data['data'] ?? data['items'];
-      if (nested is List) return _castList(nested);
+  /// يحوّل `{ ..., categories: { id, name, ... } }` إلى
+  /// `{ ..., category: { id, name, ... } }` بحيث يتوافق مع TransactionModel
+  Map<String, dynamic> _flattenCategory(Map<String, dynamic> row) {
+    final map = Map<String, dynamic>.from(row);
+    if (map.containsKey('categories')) {
+      map['category'] = map.remove('categories');
     }
-    return const [];
+    return map;
   }
 
-  Map<String, dynamic> _extractMeta(Map<String, dynamic> body) {
-    final meta = body['meta'];
-    if (meta is Map<String, dynamic>) return meta;
-    final inner = body['data'];
-    if (inner is Map<String, dynamic>) return inner;
-    return body;
-  }
-
-  List<Map<String, dynamic>> _castList(List raw) {
-    return raw
-        .map((e) {
-          if (e is Map<String, dynamic>) return e;
-          if (e is Map) return e.cast<String, dynamic>();
-          return const <String, dynamic>{};
-        })
-        .where((e) => e.isNotEmpty)
-        .toList();
-  }
-
-  Map<String, dynamic> _unwrapData(Object? body) {
-    if (body is! Map<String, dynamic>) {
-      throw const ServerException(
-        message: 'Unexpected /transactions response shape.',
-      );
+  AppException _mapPostgrest(PostgrestException e) {
+    if (e.code == '401' || e.message.contains('JWT')) {
+      return UnauthorizedException(message: e.message, statusCode: 401);
     }
-    return body;
-  }
-
-  AppException _unwrap(DioException e) {
-    final inner = e.error;
-    if (inner is AppException) return inner;
-    return mapDioException(e);
+    if (e.code == '404') return NotFoundException(message: e.message, statusCode: 404);
+    return ServerException(message: e.message);
   }
 }
 
-/// `YYYY-MM-DD` formatter for Laravel-style date filters. We avoid
-/// `intl` here so the data source has no UI dependency.
 String _ymd(DateTime d) {
   String two(int n) => n < 10 ? '0$n' : '$n';
   return '${d.year}-${two(d.month)}-${two(d.day)}';
 }
 
-int _toInt(Object? value, {int fallback = 0}) {
-  if (value == null) return fallback;
-  if (value is int) return value;
-  if (value is num) return value.toInt();
-  return int.tryParse(value.toString()) ?? fallback;
-}
-
 final transactionsRemoteDataSourceProvider =
     Provider<TransactionsRemoteDataSource>((ref) {
-  return TransactionsRemoteDataSourceImpl(ref.watch(dioProvider));
+  return TransactionsRemoteDataSourceImpl(ref.watch(supabaseClientProvider));
 });
