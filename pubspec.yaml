@@ -1,0 +1,70 @@
+name: wafferapp
+description: "WafferApp - Personal finance management app."
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.8.1
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.8
+
+  flutter_riverpod: ^2.5.1
+  riverpod_annotation: ^2.3.5
+
+  go_router: ^14.2.0
+
+  # Supabase — replaces Dio + Laravel backend
+  supabase_flutter: ^2.5.6
+
+  shared_preferences: ^2.2.3
+  flutter_secure_storage: ^9.2.2
+
+  intl: ^0.20.2
+  freezed_annotation: ^2.4.1
+  json_annotation: ^4.9.0
+
+  fl_chart: ^0.68.0
+
+  google_fonts: ^6.2.1
+  intl_phone_field_v2: ^4.0.5
+  firebase_core: ^4.7.0
+  firebase_messaging: ^16.2.0
+  flutter_local_notifications: ^20.1.0
+  device_info_plus: ^11.5.0
+  package_info_plus: ^8.3.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+  flutter_lints: ^5.0.0
+  build_runner: ^2.4.11
+  riverpod_generator: ^2.4.0
+  freezed: ^2.5.2
+  json_serializable: ^6.8.0
+  flutter_launcher_icons: ^0.14.4
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/images/
+    - assets/icons/
+    - assets/translations/
+    - assets/branding/
+
+flutter_launcher_icons:
+  android: "ic_launcher"
+  ios: false
+  image_path: "assets/branding/app_icon.png"
+  remove_alpha_ios: true
+  min_sdk_android: 23
+  adaptive_icon_background: "#FFFFFF"
+  adaptive_icon_foreground: "assets/branding/app_icon.png"

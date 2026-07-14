@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Single, branded splash for ALL Android versions.
+         Uses androidx.core.splashscreen so the Android 12+ SplashScreen API
+         and the legacy `windowBackground` splash collapse into ONE visual:
+         the Waffer wordmark on white. After the splash, the activity falls
+         back to NormalTheme so we don't show a second splash drawable. -->
+    <style name="LaunchTheme" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@android:color/white</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/waffer_splash_icon</item>
+        <item name="postSplashScreenTheme">@style/NormalTheme</item>
+    </style>
+
+    <!-- Theme applied to the Android Window as soon as the process has
+         started. Visible to the user behind the Flutter UI while it's
+         running, so we keep it on the same off-white as our app surface. -->
+    <style name="NormalTheme" parent="@android:style/Theme.Light.NoTitleBar">
+        <item name="android:windowBackground">@android:color/white</item>
+    </style>
+</resources>
